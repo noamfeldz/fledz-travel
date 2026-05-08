@@ -592,6 +592,7 @@ input:focus, select:focus, textarea:focus {
 
 .planner-place-card {
   display: flex;
+  position: relative;
   flex-direction: column;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -921,6 +922,17 @@ input:focus, select:focus, textarea:focus {
   border-top: 0;
 }
 
+.planner-day-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.day-map-panel {
+  display: flex;
+  flex-direction: column;
+}
+
 .day-map-section {
   margin-top: 1.25rem;
   padding-top: 1.25rem;
@@ -941,6 +953,30 @@ input:focus, select:focus, textarea:focus {
   border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--color-border);
+}
+
+@media (min-width: 1024px) {
+  .planner-day-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.9fr);
+    gap: 1.25rem;
+    align-items: start;
+  }
+
+  .day-drop-zone {
+    order: 1;
+  }
+
+  .day-map-panel {
+    order: 2;
+    position: sticky;
+    top: 1rem;
+  }
+
+  .day-mini-map {
+    height: 100%;
+    min-height: 420px;
+  }
 }
 
 .day-timeline {
@@ -1077,14 +1113,15 @@ input:focus, select:focus, textarea:focus {
 }
 
 .place-menu-wrap {
-  position: relative;
-  align-self: flex-end;
-  margin-top: auto;
+  position: absolute;
+  top: 0.75rem;
+  inset-inline-end: 0.75rem;
+  z-index: 3;
 }
 
 .place-menu-btn {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.7);
   border-radius: var(--radius-sm);
   padding: 0.15rem 0.55rem;
   font-size: 1.1rem;
@@ -1101,7 +1138,7 @@ input:focus, select:focus, textarea:focus {
 
 .place-context-menu {
   position: absolute;
-  bottom: calc(100% + 4px);
+  top: calc(100% + 6px);
   inset-inline-end: 0;
   min-width: 130px;
   background: var(--color-surface);
@@ -1433,6 +1470,10 @@ input:focus, select:focus, textarea:focus {
   .planner-day {
     gap: 0.75rem;
     padding-top: 0.75rem;
+  }
+
+  .planner-day-layout {
+    gap: 0.75rem;
   }
 
   .planner-assignment select,

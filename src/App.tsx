@@ -690,6 +690,9 @@ function App() {
   );
   const renderPlannerDay = (day: DayPlan) => {
     const comfort = plannerComfort(day.placeIds, places);
+    const dayPlaces = day.placeIds.map((placeId) => places.find((item) => item.id === placeId)).filter(Boolean) as Place[];
+    const dayMapPath = getDayMapPath(day, places, hotel);
+    const dayMapCenter = dayPlaces[0] ? [dayPlaces[0].lat, dayPlaces[0].lng] as [number, number] : [hotel.lat, hotel.lng] as [number, number];
 
     return (
       <article key={day.id} className="planner-day">
@@ -706,30 +709,54 @@ function App() {
             <button className="secondary-button" type="button" onClick={() => clearDayPlan(day.id)} disabled={!day.placeIds.length}>ניקוי יום</button>
           </div>
         </div>
-        <div className={`planner-image-grid day-drop-zone${dragTarget?.dayId === day.id && !dragTarget.targetPlaceId ? " active" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: null }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, null); }}>
-          <div className="planner-drop-hint">גרור מקום לכאן כדי לשבץ או לשנות סדר</div>
-          {day.placeIds.map((placeId, index) => {
-            const place = places.find((item) => item.id === placeId);
-            if (!place) return null;
-            const isPinned = day.pinnedPlaceIds.includes(place.id);
-            return (
-              <article key={place.id} className={`planner-place-card planner-place-card-clickable${isPinned ? " is-pinned" : ""}${dragTarget?.dayId === day.id && dragTarget.targetPlaceId === place.id ? " drag-target" : ""}`} draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(day.id, place.id)} onDragEnd={handlePlaceDragEnd} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: place.id }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, place.id); }} role="button" tabIndex={0}>
-                <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" />
-                <div className="planner-place-content">
-                  <div className="planner-place-top">
-                    <strong>{index + 1}. {place.name}</strong>
-                  </div>
-                  <p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p>
-                  {isPinned && <span className="pin-indicator">מעוגן ולא יוזז אוטומטית</span>}
+        <div className="planner-day-layout">
+          {!!dayPlaces.length && (
+            <section className="day-map-panel">
+              <div className="section-head compact">
+                <div>
+                  <h3>מפת היום</h3>
+                  <span>המלון וכל התחנות של היום</span>
+                </div>
+              </div>
+              <MapContainer key={`day-map-${day.id}-${day.placeIds.join("-")}`} center={dayMapCenter} zoom={12} scrollWheelZoom={false} className="day-mini-map">
+                <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}>
+                  <Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup>
+                </Marker>
+                {dayPlaces.map((place) => (
+                  <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}>
+                    <Popup><strong>{place.name}</strong><div>{place.address}</div></Popup>
+                  </Marker>
+                ))}
+                {dayMapPath.length > 1 && <Polyline positions={dayMapPath} pathOptions={{ color: "#2b6cb0", weight: 4, opacity: 0.65 }} />}
+              </MapContainer>
+            </section>
+          )}
+          <div className={`planner-image-grid day-drop-zone${dragTarget?.dayId === day.id && !dragTarget.targetPlaceId ? " active" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: null }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, null); }}>
+            <div className="planner-drop-hint">גרור מקום לכאן כדי לשבץ או לשנות סדר</div>
+            {day.placeIds.map((placeId, index) => {
+              const place = places.find((item) => item.id === placeId);
+              if (!place) return null;
+              const isPinned = day.pinnedPlaceIds.includes(place.id);
+              return (
+                <article key={place.id} className={`planner-place-card planner-place-card-clickable${isPinned ? " is-pinned" : ""}${dragTarget?.dayId === day.id && dragTarget.targetPlaceId === place.id ? " drag-target" : ""}`} draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(day.id, place.id)} onDragEnd={handlePlaceDragEnd} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: place.id }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, place.id); }} role="button" tabIndex={0}>
                   <div className="place-menu-wrap">
                     <button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); const key = `${day.id}:${place.id}`; setOpenPlaceMenu((prev) => prev === key ? null : key); }} onKeyDown={stopEventPropagation}>⋯</button>
                     {openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}
                   </div>
-                </div>
-              </article>
-            );
-          })}
-          {!day.placeIds.length && <p>עדיין אין מקומות ביום הזה. אפשר להתחיל להוסיף או לגרור לכאן.</p>}
+                  <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" />
+                  <div className="planner-place-content">
+                    <div className="planner-place-top">
+                      <strong>{index + 1}. {place.name}</strong>
+                    </div>
+                    <p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p>
+                    {isPinned && <span className="pin-indicator">מעוגן ולא יוזז אוטומטית</span>}
+                  </div>
+                </article>
+              );
+            })}
+            {!day.placeIds.length && <p>עדיין אין מקומות ביום הזה. אפשר להתחיל להוסיף או לגרור לכאן.</p>}
+          </div>
         </div>
       </article>
     );
