@@ -92,28 +92,6 @@ function App() {
   const [hotel, setHotel] = useState<Hotel>(() => readLocalStorage(STORAGE_KEYS.hotel, defaultHotel));
   const [dayPlans, setDayPlans] = useState<DayPlan[]>(() => readLocalStorage(STORAGE_KEYS.plans, defaultPlans));
   const [query, setQuery] = useState("");
-
-
-  const strokeWidth = isActive ? 2.5 : 2;
-  const color = "currentColor";
-  switch(key) {
-    case "home": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>;
-    case "saved": return <svg width="24" height="24" viewBox="0 0 24 24" fill={isActive ? "currentColor" : "none"} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>;
-    case "hotel": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M10 22v-6.57"/><path d="M12 11h.01"/><path d="M12 7h.01"/><path d="M14 15.43V22"/><path d="M15 16a5 5 0 0 0-6 0"/><path d="M16 11h.01"/><path d="M16 7h.01"/><path d="M8 11h.01"/><path d="M8 7h.01"/><rect x="4" y="2" width="16" height="20" rx="2"/></svg>;
-    case "map": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>;
-    case "planner": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
-    default: return null;
-  }
-};
-
-function App() {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [places, setPlaces] = useState<Place[]>(() => readLocalStorage(STORAGE_KEYS.places, seededPlaces));
-  const [savedIds, setSavedIds] = useState<string[]>(() => readLocalStorage(STORAGE_KEYS.saved, ["london-eye", "hyde-park"]));
-  const [hotel, setHotel] = useState<Hotel>(() => readLocalStorage(STORAGE_KEYS.hotel, defaultHotel));
-  const [dayPlans, setDayPlans] = useState<DayPlan[]>(() => readLocalStorage(STORAGE_KEYS.plans, defaultPlans));
-  const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("הכול");
   const [areaFilter, setAreaFilter] = useState<string>("הכול");
   const [hotelLookupState, setHotelLookupState] = useState<"idle" | "loading" | "error" | "done">("idle");
@@ -135,16 +113,24 @@ function App() {
   const [linkImportState, setLinkImportState] = useState<{ tone: "idle" | "loading" | "success" | "error"; message: string }>({ tone: "idle", message: "" });
   const [isAddingPlace, setIsAddingPlace] = useState(false);
   const [isEditingHotel, setIsEditingHotel] = useState(false);
+  const [modalPlaceId, setModalPlaceId] = useState<string | null>(null);
   const placeAutocompleteHostRef = useRef<HTMLDivElement | null>(null);
   const googleMapsLoaderRef = useRef<Promise<void> | null>(null);
+  const [addPlaceMode, setAddPlaceMode] = useState<"search" | "link" | "manual">("search");
+  const [autocompleteSelected, setAutocompleteSelected] = useState(false);
   const selectedPlaceId = getPlaceIdFromPathname(location.pathname);
   const selectedPlace = useMemo(() => selectedPlaceId ? places.find((place) => place.id === selectedPlaceId) ?? null : null, [places, selectedPlaceId]);
+  const modalPlace = useMemo(() => modalPlaceId ? places.find((place) => place.id === modalPlaceId) ?? null : null, [modalPlaceId, places]);
   const activeView = selectedPlaceId ? null : getViewFromPathname(location.pathname);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.places, JSON.stringify(places)); }, [places]);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.saved, JSON.stringify(savedIds)); }, [savedIds]);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.hotel, JSON.stringify(hotel)); }, [hotel]);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.plans, JSON.stringify(dayPlans)); }, [dayPlans]);
   useEffect(() => { const legacyPath = getLegacyPathFromHash(location.hash); if (legacyPath && legacyPath !== location.pathname) { navigate(legacyPath, { replace: true }); return; } const isKnownPath = getViewFromPathname(location.pathname) || selectedPlaceId; if (!isKnownPath) navigate("/", { replace: true }); }, [location.hash, location.pathname, navigate, selectedPlaceId]);
+  useEffect(() => {
+    if (!modalPlaceId) return;
+    if (!places.some((place) => place.id === modalPlaceId)) setModalPlaceId(null);
+  }, [modalPlaceId, places]);
   useEffect(() => {
     let cancelled = false;
     let widget: HTMLElement | null = null;
@@ -248,6 +234,7 @@ function App() {
             }));
             setMapAutocompleteState({ tone: "ready", message: "הפרטים נטענו מ-Google Places. אפשר לשמור את המקום." });
             setPlaceFormState({ tone: "success", message: "הפרטים נטענו מ-Google Places. אפשר לשמור את המקום." });
+            setAutocompleteSelected(true);
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             setMapAutocompleteState({ tone: "error", message: `נבחר מקום, אבל טעינת הפרטים נכשלה: ${detail}` });
@@ -274,16 +261,18 @@ function App() {
         widget.parentElement.removeChild(widget);
       }
     };
-  }, []);
+  }, [isAddingPlace, editingPlaceId]);
   const savedPlaces = useMemo(() => places.filter((place) => savedIds.includes(place.id)), [places, savedIds]);
   const filteredPlaces = useMemo(() => places.filter((place) => { const q = query.toLowerCase(); const matchesQuery = !query.trim() || place.name.toLowerCase().includes(q) || place.shortDescription.toLowerCase().includes(q) || place.address.toLowerCase().includes(q); const matchesType = typeFilter === "הכול" || place.type === typeFilter; const matchesArea = areaFilter === "הכול" || place.area === areaFilter; return matchesQuery && matchesType && matchesArea; }), [areaFilter, places, query, typeFilter]);
   const areaOptions = useMemo(() => baseAreas.concat(places.map((place) => place.area).filter(Boolean)).filter((area, index, all) => all.indexOf(area) === index), [places]);
-  const resetPlaceEditor = () => { setPlaceDraft(emptyPlaceDraft); setEditingPlaceId(null); setImportUrl(""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); };
+  const resetPlaceEditor = () => { setPlaceDraft(emptyPlaceDraft); setEditingPlaceId(null); setImportUrl(""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setAddPlaceMode("search"); setAutocompleteSelected(false); };
   const updatePlaceDraft = <K extends keyof PlaceDraft>(key: K, value: PlaceDraft[K]) => setPlaceDraft((current) => ({ ...current, [key]: value }));
   const toggleSave = (placeId: string) => setSavedIds((current) => current.includes(placeId) ? current.filter((id) => id !== placeId) : [...current, placeId]);
+  const openPlaceModal = (placeId: string) => setModalPlaceId(placeId);
+  const closePlaceModal = () => setModalPlaceId(null);
   const startAddingPlace = () => { resetPlaceEditor(); setIsAddingPlace(true); navigate("/"); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const cancelAddingPlace = () => { resetPlaceEditor(); setIsAddingPlace(false); };
-  const startEditingPlace = (place: Place) => { setEditingPlaceId(place.id); setPlaceDraft(placeToDraft(place)); setImportUrl(place.sourceUrl || place.instagramUrl || ""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setIsAddingPlace(false); navigate(getPlacePath(place.id)); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const startEditingPlace = (place: Place) => { setModalPlaceId(null); setEditingPlaceId(place.id); setPlaceDraft(placeToDraft(place)); setImportUrl(place.sourceUrl || place.instagramUrl || ""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setIsAddingPlace(false); navigate(getPlacePath(place.id)); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const stopEditingPlace = () => resetPlaceEditor();
   async function fetchAndSetImport(url: string) {
     try {
@@ -299,6 +288,7 @@ function App() {
     }
   }
   async function handleImportLink() {
+    try {
       const parsed = parsePlaceLink(importUrl);
       if (parsed.address && (!parsed.lat || !parsed.lng)) {
         try { const coordinates = await geocodeAddress(parsed.address); parsed.lat = formatCoordinate(coordinates.lat); parsed.lng = formatCoordinate(coordinates.lng); } catch {}
@@ -341,19 +331,67 @@ function App() {
   const addPlaceToDay = (dayId: string, placeId: string) => { if (!placeId) return; setDayPlans((current) => current.map((day) => day.id === dayId && !day.placeIds.includes(placeId) ? { ...day, placeIds: [...day.placeIds, placeId] } : day)); };
   const movePlace = (dayId: string, index: number, direction: -1 | 1) => setDayPlans((current) => current.map((day) => { if (day.id !== dayId) return day; const nextIndex = index + direction; if (nextIndex < 0 || nextIndex >= day.placeIds.length) return day; const reordered = [...day.placeIds]; [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]]; return { ...day, placeIds: reordered }; }));
   const removePlaceFromDay = (dayId: string, placeId: string) => setDayPlans((current) => current.map((day) => day.id === dayId ? { ...day, placeIds: day.placeIds.filter((id) => id !== placeId) } : day));
-  const placeTransport = selectedPlace ? estimateTransport(haversineKm(hotel, selectedPlace)) : null;
+  const renderPlaceDetails = (place: Place, options?: { isModal?: boolean; onClose?: () => void }) => {
+    const transport = estimateTransport(haversineKm(hotel, place));
+    const isModal = options?.isModal;
+    return (
+      <section className={`panel place-detail-hero${isModal ? " place-detail-modal-card" : ""}`}>
+        <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-detail-image" />
+        <div className="place-detail-content">
+          <div className="section-head">
+            <div>
+              <div className="place-topline">
+                <span className="chip">{place.type}</span>
+                <span className="chip soft">{place.area || "ללא אזור"}</span>
+              </div>
+              <h2>{place.name}</h2>
+              <p className="detail-summary">{place.shortDescription || "ללא תיאור"}</p>
+            </div>
+            {isModal ? <button className="secondary-button" type="button" onClick={options?.onClose}>סגירה</button> : <button className="secondary-button" type="button" onClick={() => navigate("/")}>חזרה למקומות</button>}
+          </div>
+          <div className="inline-actions">
+            <button type="button" onClick={() => toggleSave(place.id)}>{savedIds.includes(place.id) ? "הסרה משמורים" : "שמירת מקום"}</button>
+            <button className="secondary-button" type="button" onClick={() => startEditingPlace(place)}>עריכת מקום</button>
+            {isModal && <button className="secondary-button" type="button" onClick={() => { closePlaceModal(); navigate(getPlacePath(place.id)); }}>עמוד מלא</button>}
+          </div>
+          <dl className="detail-grid">
+            <div><dt>כתובת</dt><dd>{place.address}</dd></div>
+            <div><dt>שעות פתיחה</dt><dd>{place.openingHours || "לא הוזן"}</dd></div>
+            <div><dt>תחנה קרובה</dt><dd>{place.station || "לא הוזן"}</dd></div>
+            <div><dt>דירוג</dt><dd>{place.rating ? place.rating.toFixed(1) : "חדש"}</dd></div>
+            <div><dt>טלפון</dt><dd>{place.phoneNumber || "לא הוזן"}</dd></div>
+            <div><dt>אתר</dt><dd>{place.websiteUrl ? <a href={place.websiteUrl} target="_blank" rel="noreferrer">פתיחת אתר</a> : "לא הוזן"}</dd></div>
+            <div><dt>Google Maps</dt><dd>{place.googleMapsUrl ? <a href={place.googleMapsUrl} target="_blank" rel="noreferrer">פתיחה בגוגל מפות</a> : "לא הוזן"}</dd></div>
+            <div><dt>סטטוס</dt><dd>{place.businessStatus || "לא הוזן"}</dd></div>
+            <div><dt>מרחק מהמלון</dt><dd>{formatDistance(haversineKm(hotel, place))}</dd></div>
+            <div><dt>הגעה משוערת</dt><dd>{transport.mode} | {transport.minutes} דק'</dd></div>
+            <div><dt>קו רוחב</dt><dd>{place.lat.toFixed(5)}</dd></div>
+            <div><dt>קו אורך</dt><dd>{place.lng.toFixed(5)}</dd></div>
+          </dl>
+          {!!place.tips.length && <section className="sub-panel"><h3>טיפים</h3><div className="tips-row">{place.tips.map((tip) => <span key={tip} className="tip-pill">{tip}</span>)}</div></section>}
+          {(place.sourceUrl || place.instagramUrl) && <section className="sub-panel"><h3>קישורים</h3><div className="inline-links">{place.sourceUrl && <a href={place.sourceUrl} target="_blank" rel="noreferrer">לינק למקום</a>}{place.instagramUrl && <a href={place.instagramUrl} target="_blank" rel="noreferrer">Instagram</a>}</div></section>}
+        </div>
+      </section>
+    );
+  };
   const renderPlaceForm = (title: string, description: string, submitLabel: string, cancelAction?: () => void) => (
     <section className="panel">
       <div className="section-head"><div><h2>{title}</h2><span>{description}</span></div>{cancelAction && <button className="secondary-button" type="button" onClick={cancelAction}>ביטול</button>}</div>
-      <div className="google-search-panel">
-        <div ref={placeAutocompleteHostRef} className="google-autocomplete-host" />
-        <p className="google-search-note">
-          אפשר להתחיל להקליד ואז לבחור תוצאה מהרשימה. אם מפתח Google Maps מוגדר, אני אנסה למלא את הפרטים של המקום אוטומטית.
-        </p>
-        {mapAutocompleteState.message && <p className={`form-message ${mapAutocompleteState.tone}`}>{mapAutocompleteState.message}</p>}
+      <div className="import-section">
+        <div className="import-block">
+          <h3 className="import-block-title">חיפוש ב-Google Maps</h3>
+          <p className="import-block-desc">הקלד שם מקום או כתובת ובחר מהרשימה — הפרטים יתמלאו אוטומטית.</p>
+          <div ref={placeAutocompleteHostRef} className="google-autocomplete-host" />
+          {mapAutocompleteState.message && <p className={`form-message ${mapAutocompleteState.tone}`}>{mapAutocompleteState.message}</p>}
+        </div>
+        <div className="import-divider"><span>או</span></div>
+        <div className="import-block">
+          <h3 className="import-block-title">ייבוא מלינק</h3>
+          <p className="import-block-desc">הדבק קישור של Google Maps או Instagram ולחץ ייבוא.</p>
+          <div className="link-import"><input value={importUrl} onChange={(event) => setImportUrl(event.target.value)} placeholder="https://maps.google.com/..." /><button type="button" onClick={handleImportLink}>ייבוא פרטים</button></div>
+          {linkImportState.tone !== "idle" && <p className={`form-message ${linkImportState.tone}`}>{linkImportState.message}</p>}
+        </div>
       </div>
-      <div className="link-import"><input value={importUrl} onChange={(event) => setImportUrl(event.target.value)} placeholder="הדבקת לינק של Google Maps או Instagram" /><button type="button" onClick={handleImportLink}>ייבוא פרטים</button></div>
-      {linkImportState.tone !== "idle" && <p className={`form-message ${linkImportState.tone}`}>{linkImportState.message}</p>}
       <form className="form-layout" onSubmit={handlePlaceSubmit}>
         <div className="form-stack">
           <label>שם המקום<input value={placeDraft.name} onChange={(event) => updatePlaceDraft("name", event.target.value)} /></label>
@@ -395,13 +433,95 @@ function App() {
       </nav>
       <main className="content-stack">
         {selectedPlaceId && !selectedPlace && <section className="panel"><div className="section-head"><div><h2>המקום לא נמצא</h2><span>יכול להיות שהוא נמחק או שכתובת העמוד לא תקינה.</span></div><button type="button" onClick={() => navigate("/")}>חזרה למקומות</button></div></section>}
-        {selectedPlace && <><section className="panel place-detail-hero"><img src={selectedPlace.imageUrl || defaultPlaceImage} alt={selectedPlace.name} className="place-detail-image" /><div className="place-detail-content"><div className="section-head"><div><div className="place-topline"><span className="chip">{selectedPlace.type}</span><span className="chip soft">{selectedPlace.area || "ללא אזור"}</span></div><h2>{selectedPlace.name}</h2><p className="detail-summary">{selectedPlace.shortDescription || "ללא תיאור"}</p></div><button className="secondary-button" type="button" onClick={() => navigate("/")}>חזרה למקומות</button></div><div className="inline-actions"><button type="button" onClick={() => toggleSave(selectedPlace.id)}>{savedIds.includes(selectedPlace.id) ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={() => startEditingPlace(selectedPlace)}>עריכת מקום</button></div><dl className="detail-grid"><div><dt>כתובת</dt><dd>{selectedPlace.address}</dd></div><div><dt>שעות פתיחה</dt><dd>{selectedPlace.openingHours || "לא הוזן"}</dd></div><div><dt>תחנה קרובה</dt><dd>{selectedPlace.station || "לא הוזן"}</dd></div><div><dt>דירוג</dt><dd>{selectedPlace.rating ? selectedPlace.rating.toFixed(1) : "חדש"}</dd></div><div><dt>טלפון</dt><dd>{selectedPlace.phoneNumber || "לא הוזן"}</dd></div><div><dt>אתר</dt><dd>{selectedPlace.websiteUrl ? <a href={selectedPlace.websiteUrl} target="_blank" rel="noreferrer">פתיחת אתר</a> : "לא הוזן"}</dd></div><div><dt>Google Maps</dt><dd>{selectedPlace.googleMapsUrl ? <a href={selectedPlace.googleMapsUrl} target="_blank" rel="noreferrer">פתיחה בגוגל מפות</a> : "לא הוזן"}</dd></div><div><dt>סטטוס</dt><dd>{selectedPlace.businessStatus || "לא הוזן"}</dd></div><div><dt>מרחק מהמלון</dt><dd>{formatDistance(haversineKm(hotel, selectedPlace))}</dd></div><div><dt>הגעה משוערת</dt><dd>{placeTransport?.mode} | {placeTransport?.minutes} דק'</dd></div><div><dt>קו רוחב</dt><dd>{selectedPlace.lat.toFixed(5)}</dd></div><div><dt>קו אורך</dt><dd>{selectedPlace.lng.toFixed(5)}</dd></div></dl>{!!selectedPlace.tips.length && <section className="sub-panel"><h3>טיפים</h3><div className="tips-row">{selectedPlace.tips.map((tip) => <span key={tip} className="tip-pill">{tip}</span>)}</div></section>}{(selectedPlace.sourceUrl || selectedPlace.instagramUrl) && <section className="sub-panel"><h3>קישורים</h3><div className="inline-links">{selectedPlace.sourceUrl && <a href={selectedPlace.sourceUrl} target="_blank" rel="noreferrer">לינק למקום</a>}{selectedPlace.instagramUrl && <a href={selectedPlace.instagramUrl} target="_blank" rel="noreferrer">Instagram</a>}</div></section>}</div></section>{editingPlaceId === selectedPlace.id && renderPlaceForm("עריכת מקום", "כאן אפשר לערוך את כל המידע הרלוונטי של המקום.", "שמירת שינויים", stopEditingPlace)}</>}
-        {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section>{isAddingPlace && renderPlaceForm("הוספת מקום", "אפשר להוסיף ידנית או למשוך פרטים מלינק קיים.", "שמירת מקום", cancelAddingPlace)}<section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const isSaved = savedIds.includes(place.id); return <article key={place.id} className="place-card place-card-clickable" onClick={() => navigate(getPlacePath(place.id))} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); navigate(getPlacePath(place.id)); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><span className="chip">{place.type}</span><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div><div className="card-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggleSave(place.id); }}>{isSaved ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={(event) => { event.stopPropagation(); startEditingPlace(place); }}>עריכה</button></div></div></article>; })}</section></>}
-        {!selectedPlaceId && activeView === "saved" && <section><div className="section-head"><h2>מקומות שמורים</h2><span>{savedPlaces.length} נשמרו</span></div><div className="saved-list">{savedPlaces.map((place) => { const distanceKm = haversineKm(hotel, place); const travel = estimateTransport(distanceKm); return <div key={place.id} className="saved-item"><div><strong>{place.name}</strong><p>{travel.mode} | {travel.minutes} דק' | {place.station || "תחנה תתווסף בהמשך"}</p></div><div className="inline-actions"><button className="secondary-button" type="button" onClick={() => navigate(getPlacePath(place.id))}>פתיחה</button><button type="button" onClick={() => toggleSave(place.id)}>הסר</button></div></div>; })}{!savedPlaces.length && <p>עדיין לא שמרת מקומות. אפשר לחזור למסך המקומות ולבחור.</p>}</div></section>}
+        {selectedPlace && <>{renderPlaceDetails(selectedPlace)}{editingPlaceId === selectedPlace.id && renderPlaceForm("עריכת מקום", "כאן אפשר לערוך את כל המידע הרלוונטי של המקום.", "שמירת שינויים", stopEditingPlace)}</>}
+        {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section><section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const isSaved = savedIds.includes(place.id); return <article key={place.id} className="place-card place-card-clickable" onClick={() => openPlaceModal(place.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openPlaceModal(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><span className="chip">{place.type}</span><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div><div className="card-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggleSave(place.id); }}>{isSaved ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={(event) => { event.stopPropagation(); startEditingPlace(place); }}>עריכה</button></div></div></article>; })}</section></>}
+        {!selectedPlaceId && activeView === "saved" && <section><div className="section-head"><h2>מקומות שמורים</h2><span>{savedPlaces.length} נשמרו</span></div><div className="saved-list">{savedPlaces.map((place) => { const distanceKm = haversineKm(hotel, place); const travel = estimateTransport(distanceKm); return <div key={place.id} className="saved-item"><div><strong>{place.name}</strong><p>{travel.mode} | {travel.minutes} דק' | {place.station || "תחנה תתווסף בהמשך"}</p></div><div className="inline-actions"><button className="secondary-button" type="button" onClick={() => openPlaceModal(place.id)}>פתיחה</button><button type="button" onClick={() => toggleSave(place.id)}>הסר</button></div></div>; })}{!savedPlaces.length && <p>עדיין לא שמרת מקומות. אפשר לחזור למסך המקומות ולבחור.</p>}</div></section>}
         {!selectedPlaceId && activeView === "hotel" && <section><div className="section-head"><div><h2>המלון שלך</h2><span>מכאן מחושבים המרחקים וזמני ההגעה</span></div><button type="button" onClick={() => setIsEditingHotel((current) => !current)}>{isEditingHotel ? "סגירת עריכה" : "עריכת מלון"}</button></div><button className="secondary-button" type="button" onClick={applyDefaultHotel} style={{marginBottom: "1rem"}}>שימוש במלון שלנו: Park Plaza Victoria London</button><div className="hotel-status"><strong>{hotel.name}</strong><p>{hotel.address}</p><p>מיקום שמור: {hotel.lat.toFixed(4)}, {hotel.lng.toFixed(4)}</p>{hotelLookupState === "loading" && <p>מחפש את המיקום לפי הכתובת...</p>}{hotelLookupState === "done" && <p>המלון נשמר והמרחקים עודכנו.</p>}{hotelLookupState === "error" && <p>לא הצלחנו למצוא את הכתובת אוטומטית. אפשר לשמור קווי אורך ורוחב ידנית.</p>}</div>{isEditingHotel && <form className="form-layout" style={{marginTop: "1.5rem"}} onSubmit={handleHotelSubmit}><div className="form-stack"><label>שם המלון<input name="name" defaultValue={hotel.name} /></label><label>כתובת<input name="address" defaultValue={hotel.address} /></label><label>קו רוחב<input name="lat" defaultValue={hotel.lat} /></label><label>קו אורך<input name="lng" defaultValue={hotel.lng} /></label></div><div className="inline-actions"><button type="submit">שמירת מלון</button></div></form>}</section>}
         {!selectedPlaceId && activeView === "map" && <section className="map-panel"><div className="section-head"><h2>מפת המקומות</h2><span>מציגה את המלון ואת המקומות ששמרת</span></div><MapContainer center={[hotel.lat, hotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}><Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup></Marker>{savedPlaces.map((place) => { const trip = estimateTransport(haversineKm(hotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer><div className="map-legend"><div className="legend-row"><span className="legend-chip hotel">Hotel</span><span className="legend-chip place">Places</span></div>{savedPlaces.map((place) => <div key={place.id} className="saved-item compact"><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}</div></section>}
         {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>תכנון יומי</h2><span>אפשר לבנות ימים ולבדוק אם סדר המקומות נוח</span></div><button type="button" onClick={addPlanDay}>הוספת יום</button></div>{dayPlans.map((day) => { const comfort = plannerComfort(day.placeIds, places); return <article key={day.id} className="panel"><div className="day-head"><div><h3>{day.title}</h3><span className={`comfort ${comfort.tone}`}>{comfort.label}</span></div><select defaultValue="" onChange={(event) => addPlaceToDay(day.id, event.target.value)}><option value="" disabled>הוספת מקום ליום</option>{places.map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}</select></div><div className="day-places">{day.placeIds.map((placeId, index) => { const place = places.find((item) => item.id === placeId); if (!place) return null; return <div key={place.id} className="day-place"><div><strong>{index + 1}. {place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div><div className="day-actions"><button type="button" onClick={() => movePlace(day.id, index, -1)}>למעלה</button><button type="button" onClick={() => movePlace(day.id, index, 1)}>למטה</button><button type="button" onClick={() => removePlaceFromDay(day.id, place.id)}>הסר</button></div></div>; })}{!day.placeIds.length && <p>עדיין אין מקומות ביום הזה. אפשר להתחיל להוסיף.</p>}</div></article>; })}</section>}
       </main>
+      {isAddingPlace && (
+        <div className="add-dialog-backdrop" onClick={(e) => { if (e.target === e.currentTarget) cancelAddingPlace(); }} role="presentation">
+          <div className="add-dialog-box" role="dialog" aria-modal="true" aria-label="הוספת מקום">
+            <div className="add-dialog-header">
+              <h2>הוספת מקום</h2>
+              <button type="button" className="add-dialog-close" onClick={cancelAddingPlace} aria-label="סגירה">✕</button>
+            </div>
+            <div className="add-dialog-tabs">
+              <button type="button" className={`add-dialog-tab${addPlaceMode === "search" ? " active" : ""}`} onClick={() => { setAddPlaceMode("search"); setAutocompleteSelected(false); }}>🔍 חיפוש Google</button>
+              <button type="button" className={`add-dialog-tab${addPlaceMode === "link" ? " active" : ""}`} onClick={() => setAddPlaceMode("link")}>🔗 הדבק לינק</button>
+              <button type="button" className={`add-dialog-tab${addPlaceMode === "manual" ? " active" : ""}`} onClick={() => setAddPlaceMode("manual")}>✏️ ידנית</button>
+            </div>
+            <div className="add-dialog-body">
+              <form onSubmit={handlePlaceSubmit}>
+                <div style={{ display: addPlaceMode === "search" ? "flex" : "none" }} className="add-dialog-section">
+                  <p className="add-dialog-hint">הקלד שם מקום ובחר מהרשימה — הפרטים יתמלאו אוטומטית</p>
+                  <div ref={placeAutocompleteHostRef} className="google-autocomplete-host" />
+                  {mapAutocompleteState.tone === "error" && <p className={`form-message ${mapAutocompleteState.tone}`}>{mapAutocompleteState.message}</p>}
+                  {autocompleteSelected && placeDraft.name && (
+                    <div className="import-confirm">
+                      <div className="import-confirm-info">
+                        <strong className="import-confirm-name">{placeDraft.name}</strong>
+                        {placeDraft.address && <span className="import-confirm-addr">{placeDraft.address}</span>}
+                      </div>
+                      <div className="import-confirm-actions">
+                        <button type="button" className="secondary-button" onClick={() => setAddPlaceMode("manual")}>עריכה ידנית</button>
+                        <button type="submit">שמור מקום</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {addPlaceMode === "link" && (
+                  <div className="add-dialog-section">
+                    <p className="add-dialog-hint">הדבק קישור של Google Maps</p>
+                    <div className="link-import">
+                      <input value={importUrl} onChange={(e) => setImportUrl(e.target.value)} placeholder="https://maps.google.com/..." />
+                      <button type="button" onClick={handleImportLink}>ייבוא</button>
+                    </div>
+                    {linkImportState.tone !== "idle" && <p className={`form-message ${linkImportState.tone}`}>{linkImportState.message}</p>}
+                    {linkImportState.tone === "success" && placeDraft.name && (
+                      <div className="import-confirm">
+                        <div className="import-confirm-info">
+                          <strong className="import-confirm-name">{placeDraft.name}</strong>
+                          {placeDraft.address && <span className="import-confirm-addr">{placeDraft.address}</span>}
+                        </div>
+                        <div className="import-confirm-actions">
+                          <button type="button" className="secondary-button" onClick={() => setAddPlaceMode("manual")}>עריכה ידנית</button>
+                          <button type="submit">שמור מקום</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {addPlaceMode === "manual" && (
+                  <div className="add-dialog-section">
+                    <div className="form-stack">
+                      <label>שם המקום<input value={placeDraft.name} onChange={(e) => updatePlaceDraft("name", e.target.value)} /></label>
+                      <label>תיאור קצר<textarea rows={3} value={placeDraft.shortDescription} onChange={(e) => updatePlaceDraft("shortDescription", e.target.value)} /></label>
+                      <label>כתובת<input value={placeDraft.address} onChange={(e) => updatePlaceDraft("address", e.target.value)} /></label>
+                      <label>שעות פתיחה<input value={placeDraft.openingHours} onChange={(e) => updatePlaceDraft("openingHours", e.target.value)} placeholder="לדוגמה 10:00-18:00" /></label>
+                      <label>סוג<select value={placeDraft.type} onChange={(e) => updatePlaceDraft("type", e.target.value as PlaceType)}>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+                      <label>אזור<input value={placeDraft.area} onChange={(e) => updatePlaceDraft("area", e.target.value)} /></label>
+                      <label>תחנה קרובה<input value={placeDraft.station} onChange={(e) => updatePlaceDraft("station", e.target.value)} /></label>
+                      <label>תמונה<input value={placeDraft.imageUrl} onChange={(e) => updatePlaceDraft("imageUrl", e.target.value)} /></label>
+                      <label>לינק למקום<input value={placeDraft.sourceUrl} onChange={(e) => updatePlaceDraft("sourceUrl", e.target.value)} /></label>
+                      <label>אינסטגרם<input value={placeDraft.instagramUrl} onChange={(e) => updatePlaceDraft("instagramUrl", e.target.value)} /></label>
+                      <label>אתר<input value={placeDraft.websiteUrl} onChange={(e) => updatePlaceDraft("websiteUrl", e.target.value)} placeholder="אתר העסק או השאר ריק" /></label>
+                      <label>טלפון<input value={placeDraft.phoneNumber} onChange={(e) => updatePlaceDraft("phoneNumber", e.target.value)} placeholder="מספר טלפון אם יש" /></label>
+                      <label>טיפים<textarea rows={3} value={placeDraft.tips} onChange={(e) => updatePlaceDraft("tips", e.target.value)} placeholder="מופרדים בפסיקים" /></label>
+                      <label>קו רוחב<input value={placeDraft.lat} onChange={(e) => updatePlaceDraft("lat", e.target.value)} /></label>
+                      <label>קו אורך<input value={placeDraft.lng} onChange={(e) => updatePlaceDraft("lng", e.target.value)} /></label>
+                    </div>
+                    {placeFormState.tone !== "idle" && <p className={`form-message ${placeFormState.tone}`}>{placeFormState.message}</p>}
+                    <div className="inline-actions" style={{ marginTop: "1rem" }}><button type="submit">שמירת מקום</button></div>
+                  </div>
+                )}
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+      {modalPlace && !selectedPlaceId && <div className="modal-backdrop" onClick={closePlaceModal} role="presentation"><div className="modal-shell" onClick={(event) => event.stopPropagation()}>{renderPlaceDetails(modalPlace, { isModal: true, onClose: closePlaceModal })}</div></div>}
     </div>
   );
 }
