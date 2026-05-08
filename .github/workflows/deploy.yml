@@ -161,8 +161,9 @@ jobs:
           echo "📦 Copying ecosystem config..."
           rsync -avz ecosystem.config.cjs ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/
 
-          echo "📦 Copying nginx config..."
-          rsync -avz deployment/configs/nginx.conf ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/fledz-travel-nginx.conf
+          echo "📦 Copying nginx configs..."
+          rsync -avz deployment/configs/nginx.conf ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/fledz-travel-nginx-ssl.conf
+          rsync -avz deployment/configs/nginx-http.conf ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/fledz-travel-nginx-http.conf
 
       - name: Update nginx configuration
         env:
@@ -180,49 +181,26 @@ jobs:
             # Use HTTPS config if cert exists, otherwise HTTP-only
             CERT_PATH="/etc/letsencrypt/live/travel.blox.co.il/fullchain.pem"
             if [ -f "${CERT_PATH}" ]; then
-              echo "✅ SSL cert found — deploying HTTPS config"
-              cp /tmp/fledz-travel-nginx.conf ${NGINX_SITES_DIR}/${SITE_NAME}
+              echo "SSL cert found — deploying HTTPS config"
+              cp /tmp/fledz-travel-nginx-ssl.conf ${NGINX_SITES_DIR}/${SITE_NAME}
             else
-              echo "⚠️  No SSL cert yet — deploying HTTP-only config"
-              cat > ${NGINX_SITES_DIR}/${SITE_NAME} << 'HTTP_CONF'
-server {
-    listen 80;
-    listen [::]:80;
-    server_name travel.blox.co.il;
-
-    root /var/www/fledz-travel;
-    index index.html;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    location /api/ {
-        proxy_pass http://localhost:3002/api/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-HTTP_CONF
+              echo "No SSL cert yet — deploying HTTP-only config"
+              cp /tmp/fledz-travel-nginx-http.conf ${NGINX_SITES_DIR}/${SITE_NAME}
             fi
 
             ln -sf ${NGINX_SITES_DIR}/${SITE_NAME} ${NGINX_ENABLED_DIR}/${SITE_NAME}
 
             if nginx -t 2>&1; then
-              echo "✅ Nginx config valid"
+              echo "Nginx config valid"
               systemctl reload nginx
-              echo "✅ Nginx reloaded"
+              echo "Nginx reloaded"
             else
-              echo "❌ Nginx config invalid!"
+              echo "Nginx config invalid!"
               nginx -t
               exit 1
             fi
+
+            rm -f /tmp/fledz-travel-nginx-ssl.conf /tmp/fledz-travel-nginx-http.conf
           NGINX_EOF
 
       - name: Install backend dependencies and start
@@ -286,4 +264,4 @@ HTTP_CONF
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
         run: |
-          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "rm -f /tmp/fledz-travel-nginx.conf" || true
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "rm -f /tmp/fledz-travel-nginx-ssl.conf /tmp/fledz-travel-nginx-http.conf" || true
