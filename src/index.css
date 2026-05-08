@@ -490,6 +490,17 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 12px 30px rgba(0,0,0,0.06);
 }
 
+.saved-item-clickable {
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+
+.saved-item-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.05);
+  border-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-border));
+}
+
 .place-image {
   width: 100%;
   height: 240px;
@@ -597,6 +608,11 @@ input:focus, select:focus, textarea:focus {
 .planner-place-card.drag-target {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+.planner-place-card-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(0,0,0,0.06);
 }
 
 .planner-place-card-compact {
