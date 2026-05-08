@@ -2,6 +2,8 @@
   color-scheme: light;
   --font-heading: 'Outfit', sans-serif;
   --font-body: 'Inter', sans-serif;
+  --page-gutter: clamp(0.75rem, 3vw, 1.5rem);
+  --panel-padding: clamp(1rem, 3.5vw, 1.5rem);
   
   --color-bg: #fafafa;
   --color-surface: #ffffff;
@@ -80,7 +82,7 @@ a:hover {
 
 /* Hero Section */
 .hero {
-  padding: 3rem 1.5rem;
+  padding: 2.5rem var(--page-gutter);
   background-color: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
   text-align: center;
@@ -167,7 +169,7 @@ a:hover {
   height: 100%;
   max-width: 600px;
   margin: 0 auto;
-  padding: 0 1rem;
+  padding: 0 var(--page-gutter);
 }
 
 .nav-item {
@@ -205,7 +207,11 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  padding: 1.5rem;
+  padding: var(--page-gutter);
+}
+
+.content-stack > .planner-stack {
+  padding: 0;
 }
 
 .section-head {
@@ -231,7 +237,7 @@ a:hover {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: 1.5rem;
+  padding: var(--panel-padding);
 }
 
 /* Buttons */
@@ -317,6 +323,7 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 1.5rem;
+  align-items: stretch;
 }
 
 .link-import input {
@@ -423,7 +430,7 @@ input:focus, select:focus, textarea:focus {
   flex-direction: column;
   gap: 0.75rem;
   margin-bottom: 1.5rem;
-  padding: 0 1.5rem;
+  padding: 0 var(--page-gutter);
 }
 
 .filters-row {
@@ -440,7 +447,7 @@ input:focus, select:focus, textarea:focus {
   .filters {
     display: grid;
     grid-template-columns: 2fr 1fr 1fr;
-    padding: 0 1.5rem;
+    padding: 0 var(--page-gutter);
   }
   .filters-row {
     display: contents;
@@ -542,7 +549,7 @@ input:focus, select:focus, textarea:focus {
 
 .planner-image-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1rem;
 }
 
@@ -553,22 +560,23 @@ input:focus, select:focus, textarea:focus {
 .day-drop-zone {
   position: relative;
   min-height: 120px;
-  padding: 1rem;
-  border: 1px dashed var(--color-border);
+  padding: 0;
+  border: 0;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-surface) 88%, var(--color-bg));
+  background: transparent;
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .day-drop-zone.active {
-  border-color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent-light) 35%, var(--color-surface));
+  border-color: transparent;
+  background: transparent;
 }
 
 .planner-drop-hint {
   grid-column: 1 / -1;
   font-size: 0.85rem;
   color: var(--color-text-muted);
+  margin: 0;
 }
 
 .planner-place-card {
@@ -610,7 +618,7 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
   padding: 1rem;
 }
 
@@ -623,7 +631,7 @@ input:focus, select:focus, textarea:focus {
 .planner-place-top {
   display: flex;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.5rem;
   align-items: flex-start;
 }
 
@@ -778,6 +786,7 @@ input:focus, select:focus, textarea:focus {
 .inline-links {
   display: flex;
   gap: 1rem;
+  flex-wrap: wrap;
   margin-top: 1rem;
 }
 
@@ -881,6 +890,41 @@ input:focus, select:focus, textarea:focus {
 
 .planner-summary-card span {
   color: var(--color-text-muted);
+}
+
+.planner-day {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.planner-day:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.day-map-section {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.day-map-section-top {
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+  padding-top: 0;
+  padding-bottom: 1.25rem;
+  border-top: 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.day-mini-map {
+  height: 260px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
 }
 
 .day-timeline {
@@ -1011,9 +1055,9 @@ input:focus, select:focus, textarea:focus {
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
-  margin-bottom: 1.5rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .place-menu-wrap {
@@ -1092,7 +1136,7 @@ input:focus, select:focus, textarea:focus {
 .map-panel {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--nav-height) - 3rem);
+  height: calc(100dvh - var(--nav-height) - (var(--page-gutter) * 2));
 }
 
 .map {
@@ -1303,11 +1347,89 @@ input:focus, select:focus, textarea:focus {
 .import-confirm-actions {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .import-confirm-actions button {
   flex: 1;
   font-size: 0.9rem;
   padding: 0.6rem 1rem;
+}
+
+@media (max-width: 639px) {
+  .content-stack {
+    gap: 1rem;
+  }
+
+  .content-stack > .planner-stack {
+    gap: 1rem;
+  }
+
+  .hero h1 {
+    font-size: clamp(1.9rem, 8vw, 2.5rem);
+  }
+
+  .hero-copy {
+    font-size: 1rem;
+  }
+
+  .hero-stats {
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .hero-stats div {
+    flex: 1 1 40%;
+    min-width: 120px;
+  }
+
+  .section-head h2 {
+    font-size: 1.4rem;
+  }
+
+  .link-import,
+  .card-actions,
+  .import-confirm-actions,
+  .timeline-top,
+  .add-dialog-tabs {
+    flex-direction: column;
+  }
+
+  .link-import button,
+  .card-actions button,
+  .import-confirm-actions button,
+  .add-dialog-tab {
+    width: 100%;
+  }
+
+  .filters-row,
+  .place-topline,
+  .place-basic-meta {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .planner-image-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .planner-day {
+    gap: 0.75rem;
+    padding-top: 0.75rem;
+  }
+
+  .planner-assignment select,
+  .saved-item-tools select,
+  .planner-unplanned-item select,
+  .day-head-actions select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .day-mini-map,
+  .map {
+    min-height: 320px;
+  }
 }
 
