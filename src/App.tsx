@@ -1,23 +1,27 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
-import { MapContainer, Marker, Polyline, Popup, TileLayer } from "react-leaflet";
+import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import { useLocation, useNavigate } from "react-router-dom";
 import "leaflet/dist/leaflet.css";
 
 type PlaceType = "אטרקציה" | "מוזיאון" | "פארק" | "אוכל" | "ילדים";
 type TransportMode = "הליכה" | "אוטובוס" | "רכבת תחתית" | "שילוב";
 type ViewKey = "home" | "saved" | "hotel" | "map" | "planner";
-type Place = { id: string; name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; rating?: number; tips: string[]; imageUrl: string; sourceUrl?: string; instagramUrl?: string; station?: string; lat: number; lng: number; websiteUrl?: string; phoneNumber?: string; googleMapsUrl?: string; googlePlaceId?: string; businessStatus?: string; };
-type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; websiteUrl: string; phoneNumber: string; googleMapsUrl: string; googlePlaceId: string; businessStatus: string; };
+type Place = { id: string; name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; rating?: number; tips: string[]; imageUrl: string; sourceUrl?: string; instagramUrl?: string; station?: string; lat: number; lng: number; websiteUrl?: string; phoneNumber?: string; googleMapsUrl?: string; googlePlaceId?: string; businessStatus?: string; priority?: number; visitDurationMinutes?: number; entryCost?: number; };
+type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; websiteUrl: string; phoneNumber: string; googleMapsUrl: string; googlePlaceId: string; businessStatus: string; priority: string; visitDurationMinutes: string; entryCost: string; };
 type Hotel = { name: string; address: string; lat: number; lng: number; };
-type DayPlan = { id: string; title: string; placeIds: string[]; pinnedPlaceIds: string[]; };
+type DayPlan = { id: string; title: string; placeIds: string[]; pinnedPlaceIds: string[]; dayEndHour?: number; };
+type TripConfig = { tripName: string; dayStartHour: number; dayEndHour: number; lunchBreakStart: number; lunchBreakEnd: number; destination: string; };
+type Flight = { id: string; type: "arrival" | "departure"; flightDate: string; flightTime: string; airport: string; flightNumber?: string; transferMinutes: number; notes: string; };
+type ChatMessage = { role: "user" | "assistant"; content: string; };
+type AiPlanResult = { plan: Record<string, string[]>; excluded: Array<{ placeId: string; reason: string }>; recommendations: string[]; summary: string; };
 type GooglePlacePrediction = {
   place_id: string;
   description: string;
   structured_formatting?: { main_text?: string; secondary_text?: string };
 };
-const STORAGE_KEYS = { places: "fledz-places", saved: "fledz-saved", hotel: "fledz-hotel", plans: "fledz-plans" };
+const STORAGE_KEYS = { places: "fledz-places", saved: "fledz-saved", hotel: "fledz-hotel", plans: "fledz-plans", tripConfig: "fledz-trip-config", flights: "fledz-flights", visited: "fledz-visited" };
 const API = "/api";
 async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(API + path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -26,7 +30,8 @@ async function apiFetch(path: string, options?: RequestInit) {
 }
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const defaultPlaceImage = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80";
-const emptyPlaceDraft: PlaceDraft = { name: "", shortDescription: "", address: "", openingHours: "", type: "אטרקציה", area: "", imageUrl: "", sourceUrl: "", instagramUrl: "", station: "", tips: "", lat: "", lng: "", websiteUrl: "", phoneNumber: "", googleMapsUrl: "", googlePlaceId: "", businessStatus: "" };
+const emptyPlaceDraft: PlaceDraft = { name: "", shortDescription: "", address: "", openingHours: "", type: "אטרקציה", area: "", imageUrl: "", sourceUrl: "", instagramUrl: "", station: "", tips: "", lat: "", lng: "", websiteUrl: "", phoneNumber: "", googleMapsUrl: "", googlePlaceId: "", businessStatus: "", priority: "3", visitDurationMinutes: "", entryCost: "" };
+const defaultTripConfig: TripConfig = { tripName: "הטיול שלנו", dayStartHour: 9, dayEndHour: 21, lunchBreakStart: 13, lunchBreakEnd: 15, destination: "" };
 const defaultHotel: Hotel = { name: "Park Plaza Victoria London", address: "239 Vauxhall Bridge Road, London SW1V 1EQ", lat: 51.4952, lng: -0.1439 };
 const WEEK_DAY_COUNT = 7;
 function createWeekPlan(index: number): DayPlan {
@@ -97,7 +102,8 @@ function formatDistance(distanceKm: number) { return `${distanceKm.toFixed(1)} �
 function plannerComfort(placeIds: string[], places: Place[]) { if (placeIds.length < 2) return { label: "יום רגוע", tone: "good" as const }; const tripDistances = placeIds.map((placeId, index) => { if (!index) return 0; const prev = places.find((p) => p.id === placeIds[index - 1]); const current = places.find((p) => p.id === placeId); return prev && current ? haversineKm(prev, current) : 0; }).slice(1); const average = tripDistances.reduce((sum, value) => sum + value, 0) / tripDistances.length; if (average < 2.5) return { label: "סדר יום נוח", tone: "good" as const }; if (average < 5) return { label: "יום סביר עם קצת נסיעות", tone: "ok" as const }; return { label: "כדאי לקרב בין המקומות", tone: "warn" as const }; }
 function stopEventPropagation(event: React.SyntheticEvent) { event.stopPropagation(); }
 function isCardActivationKey(event: React.KeyboardEvent) { return event.key === "Enter" || event.key === " "; }
-function getVisitDurationHours(type: PlaceType) {
+function getVisitDurationHours(type: PlaceType, visitDurationMinutes?: number) {
+  if (visitDurationMinutes && visitDurationMinutes > 0) return visitDurationMinutes / 60;
   switch (type) {
     case "מוזיאון": return 2.5;
     case "פארק": return 1.5;
@@ -140,25 +146,94 @@ function getDayMapPath(day: DayPlan, places: Place[], hotel: Hotel) {
   const dayPlaces = day.placeIds.map((placeId) => places.find((place) => place.id === placeId)).filter(Boolean) as Place[];
   return [hotel, ...dayPlaces].map((point) => [point.lat, point.lng] as [number, number]);
 }
-function buildDayTimeline(day: DayPlan, places: Place[], hotel: Hotel) {
+function FitDayMapBounds({ points }: { points: Array<[number, number]> }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!points.length) return;
+    if (points.length === 1) {
+      map.setView(points[0], 13);
+      return;
+    }
+
+    map.fitBounds(L.latLngBounds(points), { padding: [24, 24] });
+  }, [map, points]);
+
+  return null;
+}
+function LazyDayMap({
+  day,
+  dayPlaces,
+  dayMapPath,
+  dayMapCenter,
+  hotel,
+}: {
+  day: DayPlan;
+  dayPlaces: Place[];
+  dayMapPath: Array<[number, number]>;
+  dayMapCenter: [number, number];
+  hotel: Hotel;
+}) {
+  const [isMapActivated, setIsMapActivated] = useState(false);
+
+  return (
+    <div>
+      {isMapActivated ? (
+        <MapContainer key={`day-map-${day.id}-${day.placeIds.join("-")}`} center={dayMapCenter} zoom={12} scrollWheelZoom={false} className="day-mini-map">
+          <FitDayMapBounds points={dayMapPath} />
+          <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}>
+            <Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup>
+          </Marker>
+          {dayPlaces.map((place) => (
+            <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}>
+              <Popup><strong>{place.name}</strong><div>{place.address}</div></Popup>
+            </Marker>
+          ))}
+          {dayMapPath.length > 1 && <Polyline positions={dayMapPath} pathOptions={{ color: "#2b6cb0", weight: 4, opacity: 0.65 }} />}
+        </MapContainer>
+      ) : (
+        <div className="day-mini-map" style={{ display: "grid", placeItems: "center", gap: "0.75rem", padding: "1rem", textAlign: "center", background: "var(--color-accent-light)", color: "var(--color-text-muted)" }}>
+          <div>
+            <strong style={{ display: "block", color: "var(--color-text-main)", marginBottom: "0.35rem" }}>תצוגת מפה קלה</strong>
+            <span>{dayPlaces.length} תחנות + המלון</span>
+          </div>
+          <button type="button" className="secondary-button" onClick={() => setIsMapActivated(true)}>
+            פתח מפה
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+function buildDayTimeline(day: DayPlan, places: Place[], hotel: Hotel, tripConfig?: TripConfig) {
   const dayPlaces = day.placeIds.map((placeId) => places.find((place) => place.id === placeId)).filter(Boolean) as Place[];
-  let currentHour = 9;
+  const startHour = tripConfig?.dayStartHour ?? 9;
+  const endHour = day.dayEndHour ?? tripConfig?.dayEndHour ?? 21;
+  const lunchStart = tripConfig?.lunchBreakStart ?? 13;
+  const lunchEnd = tripConfig?.lunchBreakEnd ?? 15;
+  let currentHour = startHour;
   let previousStop: Place | Hotel = hotel;
   return dayPlaces.map((place) => {
     const travelMinutes = estimateTransport(haversineKm(previousStop, place)).minutes;
     const openingStart = parseOpeningStartHour(place.openingHours);
-    const suggestedStart = currentHour + travelMinutes / 60;
-    const startHour = openingStart ? Math.max(suggestedStart, openingStart) : suggestedStart;
-    const endHour = startHour + getVisitDurationHours(place.type);
+    let suggestedStart = currentHour + travelMinutes / 60;
+    // Skip over lunch break
+    if (suggestedStart < lunchEnd && suggestedStart + getVisitDurationHours(place.type, place.visitDurationMinutes) > lunchStart) {
+      if (place.type !== "אוכל") suggestedStart = Math.max(suggestedStart, lunchEnd);
+    }
+    const startHourFinal = openingStart ? Math.max(suggestedStart, openingStart) : suggestedStart;
+    const duration = getVisitDurationHours(place.type, place.visitDurationMinutes);
+    const endHourFinal = startHourFinal + duration;
     previousStop = place;
-    currentHour = endHour;
+    currentHour = endHourFinal;
     return {
       place,
-      startLabel: formatHourLabel(startHour),
-      endLabel: formatHourLabel(endHour),
-      dayPart: getDayPartLabel(startHour),
+      startLabel: formatHourLabel(startHourFinal),
+      endLabel: formatHourLabel(endHourFinal),
+      dayPart: getDayPartLabel(startHourFinal),
       travelMinutes,
-      isTight: endHour > 19.5,
+      isTight: endHourFinal > endHour,
     };
   });
 }
@@ -169,23 +244,44 @@ function sortPlacesForPlanner(places: Place[], hotel: Hotel) {
     return haversineKm(hotel, left) - haversineKm(hotel, right);
   });
 }
-function autoDistributeWeek(dayPlans: DayPlan[], places: Place[], hotel: Hotel) {
+function autoDistributeWeek(dayPlans: DayPlan[], places: Place[], hotel: Hotel, visitedIds?: string[], tripConfig?: TripConfig) {
   const normalizedPlans = normalizeDayPlans(dayPlans);
   const placeById = new Map(places.map((place) => [place.id, place]));
+  const visitedSet = new Set(visitedIds || []);
   const pinnedPlaceIds = new Set(normalizedPlans.flatMap((day) => day.pinnedPlaceIds));
+  const startH = tripConfig?.dayStartHour ?? 9;
+  const defaultEndH = tripConfig?.dayEndHour ?? 21;
+  const lunchStart = tripConfig?.lunchBreakStart ?? 13;
+  const lunchEnd = tripConfig?.lunchBreakEnd ?? 15;
+  const lunchDuration = lunchEnd - lunchStart;
+
   const nextPlans = normalizedPlans.map((day) => ({
     ...day,
     placeIds: day.placeIds.filter((placeId) => day.pinnedPlaceIds.includes(placeId) && placeById.has(placeId)),
     pinnedPlaceIds: day.pinnedPlaceIds.filter((placeId) => placeById.has(placeId)),
   }));
-  const candidates = sortPlacesForPlanner(places.filter((place) => !pinnedPlaceIds.has(place.id)), hotel);
+
+  // Sort by priority desc, then by area proximity to hotel
+  const candidates = sortPlacesForPlanner(
+    places.filter((place) => !pinnedPlaceIds.has(place.id) && !visitedSet.has(place.id)),
+    hotel,
+  ).sort((a, b) => (b.priority ?? 3) - (a.priority ?? 3));
 
   for (const place of candidates) {
+    const placeDurationMins = getVisitDurationHours(place.type, place.visitDurationMinutes) * 60;
+
     const bestDay = nextPlans.reduce<{ index: number; score: number } | null>((best, day, index) => {
       const assignedPlaces = day.placeIds.map((placeId) => placeById.get(placeId)).filter(Boolean) as Place[];
+      // Check time budget — use per-day override if set
+      const dayEndH = day.dayEndHour ?? defaultEndH;
+      const totalDayMinutes = (dayEndH - startH - lunchDuration) * 60;
+      const usedMins = assignedPlaces.reduce((sum, p) => sum + getVisitDurationHours(p.type, p.visitDurationMinutes) * 60, 0);
+      const travelBuffer = assignedPlaces.length * 20; // rough 20 min travel between places
+      if (usedMins + travelBuffer + placeDurationMins > totalDayMinutes) return best;
+
       const lastPlace = assignedPlaces[assignedPlaces.length - 1] || null;
       const tripDistance = lastPlace ? haversineKm(lastPlace, place) : haversineKm(hotel, place);
-      const sameAreaCount = assignedPlaces.filter((assignedPlace) => assignedPlace.area && assignedPlace.area === place.area).length;
+      const sameAreaCount = assignedPlaces.filter((ap) => ap.area && ap.area === place.area).length;
       const score = day.placeIds.length * 4 + tripDistance - sameAreaCount * 1.25;
       if (!best || score < best.score) return { index, score };
       return best;
@@ -198,7 +294,7 @@ function autoDistributeWeek(dayPlans: DayPlan[], places: Place[], hotel: Hotel) 
 }
 async function geocodeAddress(address: string) { const encoded = encodeURIComponent(address); const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encoded}`, { headers: { Accept: "application/json" } }); if (!response.ok) throw new Error("failed"); const data = (await response.json()) as Array<{ lat: string; lon: string }>; if (!data.length) throw new Error("not-found"); return { lat: Number(data[0].lat), lng: Number(data[0].lon) }; }
 function buildPlaceId(name: string) { return `${name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "place"}-${Date.now()}`; }
-function placeToDraft(place: Place): PlaceDraft { return { name: place.name, shortDescription: place.shortDescription, address: place.address, openingHours: place.openingHours, type: place.type, area: place.area, imageUrl: place.imageUrl === defaultPlaceImage ? "" : place.imageUrl, sourceUrl: place.sourceUrl || "", instagramUrl: place.instagramUrl || "", station: place.station || "", tips: place.tips.join(", "), lat: String(place.lat), lng: String(place.lng), websiteUrl: place.websiteUrl || "", phoneNumber: place.phoneNumber || "", googleMapsUrl: place.googleMapsUrl || "", googlePlaceId: place.googlePlaceId || "", businessStatus: place.businessStatus || "" }; }
+function placeToDraft(place: Place): PlaceDraft { return { name: place.name, shortDescription: place.shortDescription, address: place.address, openingHours: place.openingHours, type: place.type, area: place.area, imageUrl: place.imageUrl === defaultPlaceImage ? "" : place.imageUrl, sourceUrl: place.sourceUrl || "", instagramUrl: place.instagramUrl || "", station: place.station || "", tips: place.tips.join(", "), lat: String(place.lat), lng: String(place.lng), websiteUrl: place.websiteUrl || "", phoneNumber: place.phoneNumber || "", googleMapsUrl: place.googleMapsUrl || "", googlePlaceId: place.googlePlaceId || "", businessStatus: place.businessStatus || "", priority: String(place.priority ?? 3), visitDurationMinutes: place.visitDurationMinutes ? String(place.visitDurationMinutes) : "", entryCost: place.entryCost != null ? String(place.entryCost) : "" }; }
 function formatCoordinate(value: number) { return String(Number(value.toFixed(6))); }
 function decodeLinkText(value: string) { return decodeURIComponent(value).replace(/\+/g, " ").replace(/[_-]+/g, " ").trim(); }
 function extractCoordinatesFromText(value: string) { const atMatch = value.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/); if (atMatch) return { lat: Number(atMatch[1]), lng: Number(atMatch[2]) }; const markerMatch = value.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/); if (markerMatch) return { lat: Number(markerMatch[1]), lng: Number(markerMatch[2]) }; return null; }
@@ -243,6 +339,18 @@ function App() {
   const [savedIds, setSavedIds] = useState<string[]>(() => readLocalStorage(STORAGE_KEYS.saved, ["london-eye", "hyde-park"]));
   const [hotel, setHotel] = useState<Hotel>(() => readLocalStorage(STORAGE_KEYS.hotel, defaultHotel));
   const [dayPlans, setDayPlans] = useState<DayPlan[]>(() => normalizeDayPlans(readLocalStorage(STORAGE_KEYS.plans, defaultPlans)));
+  const [tripConfig, setTripConfig] = useState<TripConfig>(() => readLocalStorage(STORAGE_KEYS.tripConfig, defaultTripConfig));
+  const [flights, setFlights] = useState<Flight[]>(() => readLocalStorage(STORAGE_KEYS.flights, []));
+  const [visitedIds, setVisitedIds] = useState<string[]>(() => readLocalStorage(STORAGE_KEYS.visited, []));
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [aiChatLoading, setAiChatLoading] = useState(false);
+  const [aiPlanLoading, setAiPlanLoading] = useState(false);
+  const [aiPlanResult, setAiPlanResult] = useState<AiPlanResult | null>(null);
+  const [showAiChat, setShowAiChat] = useState(false);
+  const [showTripSettings, setShowTripSettings] = useState(false);
+  const [showFlights, setShowFlights] = useState(false);
+  const [flightDraft, setFlightDraft] = useState<Partial<Flight>>({ type: "arrival", transferMinutes: 45 });
   const [dbReady, setDbReady] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("הכול");
@@ -283,7 +391,10 @@ function App() {
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.places, JSON.stringify(places)); }, [places]);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.saved, JSON.stringify(savedIds)); }, [savedIds]);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.hotel, JSON.stringify(hotel)); }, [hotel]);
-  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.plans, JSON.stringify(dayPlans)); }, [dayPlans]);  // ── track whether initial DB load has completed ───────────────────────────
+  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.plans, JSON.stringify(dayPlans)); }, [dayPlans]);
+  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.tripConfig, JSON.stringify(tripConfig)); }, [tripConfig]);
+  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.flights, JSON.stringify(flights)); }, [flights]);
+  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.visited, JSON.stringify(visitedIds)); }, [visitedIds]);  // ── track whether initial DB load has completed ───────────────────────────
   const dbInitDone = useRef(false);
   useEffect(() => {
     if (dbReady && !dbInitDone.current) { dbInitDone.current = true; }
@@ -302,19 +413,35 @@ function App() {
   useEffect(() => {
     if (!dbInitDone.current) return;
     apiFetch("/plans", { method: "PUT", body: JSON.stringify(dayPlans) }).catch(() => {});
-  }, [dayPlans]);  // ── load from DB on mount ─────────────────────────────────────────────────
+  }, [dayPlans]);
+  // ── sync visited to DB ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!dbInitDone.current) return;
+    apiFetch("/visited", { method: "PUT", body: JSON.stringify(visitedIds) }).catch(() => {});
+  }, [visitedIds]);
+  // ── sync trip config to DB ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!dbInitDone.current) return;
+    apiFetch("/trip-config", { method: "PUT", body: JSON.stringify(tripConfig) }).catch(() => {});
+  }, [tripConfig]);  // ── load from DB on mount ─────────────────────────────────────────────────
   useEffect(() => {
     apiFetch("/health").then(async () => {
-      const [dbPlaces, dbSaved, dbHotel, dbPlans] = await Promise.all([
+      const [dbPlaces, dbSaved, dbHotel, dbPlans, dbVisited, dbTripConfig, dbFlights] = await Promise.all([
         apiFetch("/places"),
         apiFetch("/saved"),
         apiFetch("/hotel"),
         apiFetch("/plans"),
+        apiFetch("/visited"),
+        apiFetch("/trip-config"),
+        apiFetch("/flights"),
       ]);
       if (Array.isArray(dbPlaces) && dbPlaces.length > 0) setPlaces(dbPlaces as Place[]);
       if (Array.isArray(dbSaved)) setSavedIds(dbSaved as string[]);
       if (dbHotel) setHotel(dbHotel as Hotel);
       if (Array.isArray(dbPlans)) setDayPlans(normalizeDayPlans(dbPlans as DayPlan[]));
+      if (Array.isArray(dbVisited)) setVisitedIds(dbVisited as string[]);
+      if (dbTripConfig) setTripConfig(dbTripConfig as TripConfig);
+      if (Array.isArray(dbFlights)) setFlights(dbFlights as Flight[]);
       setDbReady(true);
     }).catch(() => {
       // API not available — continue with localStorage only
@@ -477,9 +604,9 @@ function App() {
   const activeDaysCount = useMemo(() => dayPlans.filter((day) => day.placeIds.length > 0).length, [dayPlans]);
   const pinnedPlacesCount = useMemo(() => Object.keys(pinnedDayByPlaceId).length, [pinnedDayByPlaceId]);
   const timelineByDayId = useMemo(() => dayPlans.reduce<Record<string, ReturnType<typeof buildDayTimeline>>>((result, day) => {
-    result[day.id] = buildDayTimeline(day, places, hotel);
+    result[day.id] = buildDayTimeline(day, places, hotel, tripConfig);
     return result;
-  }, {}), [dayPlans, hotel, places]);
+  }, {}), [dayPlans, hotel, places, tripConfig]);
   const resetPlaceEditor = () => { setPlaceDraft(emptyPlaceDraft); setEditingPlaceId(null); setImportUrl(""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setAddPlaceMode("search"); setAutocompleteSelected(false); };
   const updatePlaceDraft = <K extends keyof PlaceDraft>(key: K, value: PlaceDraft[K]) => setPlaceDraft((current) => ({ ...current, [key]: value }));
   const toggleSave = (placeId: string) => setSavedIds((current) => current.includes(placeId) ? current.filter((id) => id !== placeId) : [...current, placeId]);
@@ -540,7 +667,7 @@ function App() {
       catch { setPlaceFormState({ tone: "error", message: "לא הצלחתי לאתר את המיקום מהכתובת. אפשר להוסיף ידנית קו רוחב וקו אורך." }); return; }
     }
     const existingPlace = editingPlaceId ? places.find((place) => place.id === editingPlaceId) : undefined;
-    const nextPlace: Place = { id: existingPlace?.id || buildPlaceId(name), name, shortDescription: placeDraft.shortDescription.trim() || "נוסף ידנית", address, openingHours: placeDraft.openingHours.trim(), type: placeDraft.type, area: placeDraft.area.trim(), rating: existingPlace?.rating, tips: placeDraft.tips.split(",").map((item) => item.trim()).filter(Boolean), imageUrl: placeDraft.imageUrl.trim() || existingPlace?.imageUrl || defaultPlaceImage, sourceUrl: placeDraft.sourceUrl.trim() || undefined, instagramUrl: placeDraft.instagramUrl.trim() || undefined, station: placeDraft.station.trim() || undefined, lat, lng, websiteUrl: placeDraft.websiteUrl.trim() || existingPlace?.websiteUrl || undefined, phoneNumber: placeDraft.phoneNumber.trim() || existingPlace?.phoneNumber || undefined, googleMapsUrl: placeDraft.googleMapsUrl.trim() || existingPlace?.googleMapsUrl || undefined, googlePlaceId: placeDraft.googlePlaceId.trim() || existingPlace?.googlePlaceId || undefined, businessStatus: placeDraft.businessStatus.trim() || existingPlace?.businessStatus || undefined };
+    const nextPlace: Place = { id: existingPlace?.id || buildPlaceId(name), name, shortDescription: placeDraft.shortDescription.trim() || "נוסף ידנית", address, openingHours: placeDraft.openingHours.trim(), type: placeDraft.type, area: placeDraft.area.trim(), rating: existingPlace?.rating, tips: placeDraft.tips.split(",").map((item) => item.trim()).filter(Boolean), imageUrl: placeDraft.imageUrl.trim() || existingPlace?.imageUrl || defaultPlaceImage, sourceUrl: placeDraft.sourceUrl.trim() || undefined, instagramUrl: placeDraft.instagramUrl.trim() || undefined, station: placeDraft.station.trim() || undefined, lat, lng, websiteUrl: placeDraft.websiteUrl.trim() || existingPlace?.websiteUrl || undefined, phoneNumber: placeDraft.phoneNumber.trim() || existingPlace?.phoneNumber || undefined, googleMapsUrl: placeDraft.googleMapsUrl.trim() || existingPlace?.googleMapsUrl || undefined, googlePlaceId: placeDraft.googlePlaceId.trim() || existingPlace?.googlePlaceId || undefined, businessStatus: placeDraft.businessStatus.trim() || existingPlace?.businessStatus || undefined, priority: placeDraft.priority ? Number(placeDraft.priority) : 3, visitDurationMinutes: placeDraft.visitDurationMinutes ? Number(placeDraft.visitDurationMinutes) : undefined, entryCost: placeDraft.entryCost !== "" ? Number(placeDraft.entryCost) : undefined };
     setPlaces((current) => editingPlaceId ? current.map((place) => place.id === editingPlaceId ? nextPlace : place) : [nextPlace, ...current]);
     apiFetch("/places", { method: "POST", body: JSON.stringify(nextPlace) }).catch(() => {});
     setPlaceFormState({ tone: "success", message: editingPlaceId ? "השינויים נשמרו." : "המקום נוסף לרשימה." });
@@ -575,7 +702,60 @@ function App() {
     const isPinned = day.pinnedPlaceIds.includes(placeId);
     return { ...day, pinnedPlaceIds: isPinned ? day.pinnedPlaceIds.filter((id) => id !== placeId) : [...day.pinnedPlaceIds, placeId] };
   }));
-  const autoFillWeek = () => setDayPlans((current) => autoDistributeWeek(current, places, hotel));
+  const autoFillWeek = () => setDayPlans((current) => autoDistributeWeek(current, places, hotel, visitedIds, tripConfig));
+  const toggleVisited = (placeId: string) => setVisitedIds((current) => current.includes(placeId) ? current.filter((id) => id !== placeId) : [...current, placeId]);
+  const addFlight = async () => {
+    if (!flightDraft.type || !flightDraft.flightDate || !flightDraft.flightTime) return;
+    const newFlight: Flight = { id: `flight-${Date.now()}`, type: flightDraft.type as "arrival" | "departure", flightDate: flightDraft.flightDate!, flightTime: flightDraft.flightTime!, airport: flightDraft.airport || "", flightNumber: flightDraft.flightNumber || undefined, transferMinutes: flightDraft.transferMinutes ?? 45, notes: flightDraft.notes || "" };
+    setFlights((current) => [...current, newFlight]);
+    apiFetch("/flights", { method: "POST", body: JSON.stringify(newFlight) }).catch(() => {});
+    setFlightDraft({ type: "arrival", transferMinutes: 45 });
+  };
+  const removeFlight = (id: string) => {
+    setFlights((current) => current.filter((f) => f.id !== id));
+    apiFetch(`/flights/${id}`, { method: "DELETE" }).catch(() => {});
+  };
+  const buildAiContext = () => ({ places, hotel, dayPlans, tripConfig, flights, visitedIds });
+  const runAiPlan = async () => {
+    setAiPlanLoading(true);
+    setAiPlanResult(null);
+    try {
+      const result = await apiFetch("/ai/plan", { method: "POST", body: JSON.stringify(buildAiContext()) }) as AiPlanResult;
+      setAiPlanResult(result);
+    } catch (e) {
+      setAiPlanResult({ plan: {}, excluded: [], recommendations: [], summary: `שגיאה: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setAiPlanLoading(false);
+    }
+  };
+  const applyAiPlan = (result: AiPlanResult) => {
+    setDayPlans((current) => current.map((day) => {
+      const aiPlaceIds = result.plan[day.id];
+      if (!aiPlaceIds) return day;
+      // Keep pinned places and merge AI suggestions
+      const pinned = day.pinnedPlaceIds.filter((id) => day.placeIds.includes(id));
+      const merged = [...new Set([...pinned, ...aiPlaceIds])];
+      return { ...day, placeIds: merged };
+    }));
+    setAiPlanResult(null);
+  };
+  const sendChatMessage = async () => {
+    const msg = chatInput.trim();
+    if (!msg || aiChatLoading) return;
+    const userMessage: ChatMessage = { role: "user", content: msg };
+    setChatMessages((current) => [...current, userMessage]);
+    setChatInput("");
+    setAiChatLoading(true);
+    try {
+      const history = chatMessages.map((m) => ({ role: m.role, content: m.content }));
+      const result = await apiFetch("/ai/chat", { method: "POST", body: JSON.stringify({ message: msg, history, ...buildAiContext() }) }) as { reply: string };
+      setChatMessages((current) => [...current, { role: "assistant", content: result.reply }]);
+    } catch (e) {
+      setChatMessages((current) => [...current, { role: "assistant", content: `שגיאה: ${e instanceof Error ? e.message : String(e)}` }]);
+    } finally {
+      setAiChatLoading(false);
+    }
+  };
   const movePlaceByDrag = (sourceDayId: string | null, placeId: string, targetDayId: string, targetPlaceId?: string | null) => {
     setDayPlans((current) => {
       const isPinned = current.some((day) => day.pinnedPlaceIds.includes(placeId));
@@ -701,6 +881,25 @@ function App() {
             <h3>{day.title}</h3>
             <span className={`comfort ${comfort.tone}`}>{comfort.label}</span>
           </div>
+          <div className="day-end-hour-row" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}>
+            <label className="day-end-hour-label">
+              🌙 עד
+              <input
+                type="number"
+                min={16}
+                max={30}
+                value={day.dayEndHour ?? tripConfig.dayEndHour}
+                className="day-end-hour-input"
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setDayPlans((current) => current.map((d) => d.id === day.id ? { ...d, dayEndHour: val === tripConfig.dayEndHour ? undefined : val } : d));
+                }}
+              />
+            </label>
+            {day.dayEndHour !== undefined && (
+              <button type="button" className="day-end-hour-reset" title="איפוס לברירת מחדל" onClick={() => setDayPlans((current) => current.map((d) => d.id === day.id ? { ...d, dayEndHour: undefined } : d))}>↺</button>
+            )}
+          </div>
           <div className="day-head-actions">
             <select value="" onChange={(event) => addPlaceToDay(day.id, event.target.value)}>
               <option value="">הוספת מקום ליום</option>
@@ -718,18 +917,7 @@ function App() {
                   <span>המלון וכל התחנות של היום</span>
                 </div>
               </div>
-              <MapContainer key={`day-map-${day.id}-${day.placeIds.join("-")}`} center={dayMapCenter} zoom={12} scrollWheelZoom={false} className="day-mini-map">
-                <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                <Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}>
-                  <Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup>
-                </Marker>
-                {dayPlaces.map((place) => (
-                  <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}>
-                    <Popup><strong>{place.name}</strong><div>{place.address}</div></Popup>
-                  </Marker>
-                ))}
-                {dayMapPath.length > 1 && <Polyline positions={dayMapPath} pathOptions={{ color: "#2b6cb0", weight: 4, opacity: 0.65 }} />}
-              </MapContainer>
+              <LazyDayMap day={day} dayPlaces={dayPlaces} dayMapPath={dayMapPath} dayMapCenter={dayMapCenter} hotel={hotel} />
             </section>
           )}
           <div className={`planner-image-grid day-drop-zone${dragTarget?.dayId === day.id && !dragTarget.targetPlaceId ? " active" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: null }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, null); }}>
@@ -738,12 +926,14 @@ function App() {
               const place = places.find((item) => item.id === placeId);
               if (!place) return null;
               const isPinned = day.pinnedPlaceIds.includes(place.id);
+              const isVisited = visitedIds.includes(place.id);
               return (
-                <article key={place.id} className={`planner-place-card planner-place-card-clickable${isPinned ? " is-pinned" : ""}${dragTarget?.dayId === day.id && dragTarget.targetPlaceId === place.id ? " drag-target" : ""}`} draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(day.id, place.id)} onDragEnd={handlePlaceDragEnd} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: place.id }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, place.id); }} role="button" tabIndex={0}>
+                <article key={place.id} className={`planner-place-card planner-place-card-clickable${isPinned ? " is-pinned" : ""}${isVisited ? " is-visited" : ""}${dragTarget?.dayId === day.id && dragTarget.targetPlaceId === place.id ? " drag-target" : ""}`} draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(day.id, place.id)} onDragEnd={handlePlaceDragEnd} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: place.id }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, place.id); }} role="button" tabIndex={0}>
                   <div className="place-menu-wrap">
                     <button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); const key = `${day.id}:${place.id}`; setOpenPlaceMenu((prev) => prev === key ? null : key); }} onKeyDown={stopEventPropagation}>⋯</button>
-                    {openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}
+                    {openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" onClick={() => { toggleVisited(place.id); setOpenPlaceMenu(null); }}>{isVisited ? "↩ בטל ביקור" : "✓ ביקרנו"}</button><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}
                   </div>
+                  {isVisited && <span className="visited-badge">✓ ביקרנו</span>}
                   <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" />
                   <div className="planner-place-content">
                     <div className="planner-place-top">
@@ -784,7 +974,7 @@ function App() {
         {!selectedPlaceId && activeView === "saved" && <section><div className="section-head"><h2>מקומות שמורים</h2><span>{savedPlaces.length} נשמרו</span></div><div className="saved-list">{savedPlaces.map((place) => { const distanceKm = haversineKm(hotel, place); const travel = estimateTransport(distanceKm); const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <div key={place.id} className="saved-item saved-item-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{travel.mode} | {travel.minutes} דק' | {place.station || "תחנה תתווסף בהמשך"}</p>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div><div className="saved-item-tools" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}><label>שיבוץ<select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); return; } addPlaceToDay(nextDayId, place.id); }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></label><div className="inline-actions"><button className="secondary-button" type="button" onClick={() => openPlacePage(place.id)}>פתיחה</button><button type="button" onClick={() => toggleSave(place.id)}>הסר</button></div></div></div>; })}{!savedPlaces.length && <p>עדיין לא שמרת מקומות. אפשר לחזור למסך המקומות ולבחור.</p>}</div></section>}
         {!selectedPlaceId && activeView === "hotel" && <section><div className="section-head"><div><h2>המלון שלך</h2><span>מכאן מחושבים המרחקים וזמני ההגעה</span></div><button type="button" onClick={() => setIsEditingHotel((current) => !current)}>{isEditingHotel ? "סגירת עריכה" : "עריכת מלון"}</button></div><button className="secondary-button" type="button" onClick={applyDefaultHotel} style={{marginBottom: "1rem"}}>שימוש במלון שלנו: Park Plaza Victoria London</button><div className="hotel-status"><strong>{hotel.name}</strong><p>{hotel.address}</p><p>מיקום שמור: {hotel.lat.toFixed(4)}, {hotel.lng.toFixed(4)}</p>{hotelLookupState === "loading" && <p>מחפש את המיקום לפי הכתובת...</p>}{hotelLookupState === "done" && <p>המלון נשמר והמרחקים עודכנו.</p>}{hotelLookupState === "error" && <p>לא הצלחנו למצוא את הכתובת אוטומטית. אפשר לשמור קווי אורך ורוחב ידנית.</p>}</div>{isEditingHotel && <form className="form-layout" style={{marginTop: "1.5rem"}} onSubmit={handleHotelSubmit}><div className="form-stack"><label>שם המלון<input name="name" defaultValue={hotel.name} /></label><label>כתובת<input name="address" defaultValue={hotel.address} /></label><label>קו רוחב<input name="lat" defaultValue={hotel.lat} /></label><label>קו אורך<input name="lng" defaultValue={hotel.lng} /></label></div><div className="inline-actions"><button type="submit">שמירת מלון</button></div></form>}</section>}
         {!selectedPlaceId && activeView === "map" && <section className="map-panel"><div className="section-head"><h2>מפת המקומות</h2><span>מציגה את המלון ואת כל המקומות</span></div><MapContainer center={[hotel.lat, hotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}><Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup></Marker>{places.map((place) => { const trip = estimateTransport(haversineKm(hotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer><div className="map-legend"><div className="legend-row"><span className="legend-chip hotel">Hotel</span><span className="legend-chip place">Places</span></div>{places.map((place) => <div key={place.id} className="saved-item saved-item-clickable compact" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}</div></section>}
-        {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>לו"ז לשבוע</h2><span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר</span></div><div className="planner-toolbar"><span>{activeDaysCount} ימים פעילים</span><button type="button" onClick={autoFillWeek}>חלוקה אוטומטית</button></div></div><div className="planner-summary-grid"><article className="planner-summary-card"><strong>{plannedPlacesCount}</strong><span>מקומות שובצו</span></article><article className="planner-summary-card"><strong>{unplannedPlaces.length}</strong><span>עדיין בלי יום</span></article><article className="planner-summary-card"><strong>{pinnedPlacesCount}</strong><span>מקומות מעוגנים</span></article><article className="planner-summary-card"><strong>{places.length}</strong><span>סה"כ מקומות</span></article></div>{!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}{dayPlans.map(renderPlannerDay)}</section>}
+        {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>לו"ז לשבוע</h2><span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר</span></div><div className="planner-toolbar"><span>{activeDaysCount} ימים פעילים</span><button type="button" onClick={() => setShowTripSettings(true)}>⚙️ הגדרות</button><button type="button" onClick={() => setShowFlights(true)}>✈️ טיסות ({flights.length})</button><button type="button" onClick={autoFillWeek}>חלוקה אוטומטית</button><button type="button" onClick={runAiPlan} disabled={aiPlanLoading}>{aiPlanLoading ? "מחשב..." : "🤖 AI תכנון"}</button><button type="button" onClick={() => setShowAiChat(true)}>💬 צ'אט AI</button></div></div>{aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}<div className="planner-summary-grid"><article className="planner-summary-card"><strong>{plannedPlacesCount}</strong><span>מקומות שובצו</span></article><article className="planner-summary-card"><strong>{unplannedPlaces.length}</strong><span>עדיין בלי יום</span></article><article className="planner-summary-card"><strong>{pinnedPlacesCount}</strong><span>מקומות מעוגנים</span></article><article className="planner-summary-card"><strong>{places.length}</strong><span>סה"כ מקומות</span></article></div>{!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}{dayPlans.map(renderPlannerDay)}</section>}
       </main>
       {isAddingPlace && (
         <div className="add-dialog-backdrop" onClick={(e) => { if (e.target === e.currentTarget) cancelAddingPlace(); }} role="presentation">
@@ -857,6 +1047,9 @@ function App() {
                       <label>טיפים<textarea rows={3} value={placeDraft.tips} onChange={(e) => updatePlaceDraft("tips", e.target.value)} placeholder="מופרדים בפסיקים" /></label>
                       <label>קו רוחב<input value={placeDraft.lat} onChange={(e) => updatePlaceDraft("lat", e.target.value)} /></label>
                       <label>קו אורך<input value={placeDraft.lng} onChange={(e) => updatePlaceDraft("lng", e.target.value)} /></label>
+                      <label>עדיפות<select value={placeDraft.priority} onChange={(e) => updatePlaceDraft("priority", e.target.value)}><option value="1">1 - נמוכה</option><option value="2">2</option><option value="3">3 - רגילה</option><option value="4">4</option><option value="5">5 - גבוהה</option></select></label>
+                      <label>משך ביקור (דקות)<input type="number" value={placeDraft.visitDurationMinutes} onChange={(e) => updatePlaceDraft("visitDurationMinutes", e.target.value)} placeholder="ריק = ברירת מחדל לפי סוג" /></label>
+                      <label>עלות כניסה (₪)<input type="number" value={placeDraft.entryCost} onChange={(e) => updatePlaceDraft("entryCost", e.target.value)} placeholder="0 = חינם, ריק = לא ידוע" /></label>
                     </div>
                     {placeFormState.tone !== "idle" && <p className={`form-message ${placeFormState.tone}`}>{placeFormState.message}</p>}
                     <div className="inline-actions" style={{ marginTop: "1rem" }}><button type="submit">שמירת מקום</button></div>
@@ -868,6 +1061,81 @@ function App() {
         </div>
       )}
       {modalPlace && !selectedPlaceId && <div className="modal-backdrop" onClick={closePlaceModal} role="presentation"><div className="modal-shell" onClick={(event) => event.stopPropagation()}>{renderPlaceDetails(modalPlace, { isModal: true, onClose: closePlaceModal })}</div></div>}
+      {showAiChat && (
+        <div className="modal-backdrop" onClick={() => setShowAiChat(false)} role="presentation">
+          <div className="ai-chat-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="ai-chat-header">
+              <strong>💬 צ'אט עם ה-AI על הטיול</strong>
+              <button type="button" onClick={() => setShowAiChat(false)}>✕</button>
+            </div>
+            <div className="ai-chat-messages">
+              {!chatMessages.length && <p className="ai-chat-placeholder">שאל/י כל שאלה על הטיול — ה-AI מכיר את כל המקומות, הימים והטיסות שלך.</p>}
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`ai-chat-msg ai-chat-msg-${msg.role}`}>
+                  <span className="ai-chat-role">{msg.role === "user" ? "אתה" : "AI"}</span>
+                  <p>{msg.content}</p>
+                </div>
+              ))}
+              {aiChatLoading && <div className="ai-chat-msg ai-chat-msg-assistant"><span className="ai-chat-role">AI</span><p>...</p></div>}
+            </div>
+            <div className="ai-chat-input-row">
+              <textarea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
+                placeholder="שאל/י שאלה על הטיול..."
+                rows={2}
+              />
+              <button type="button" onClick={sendChatMessage} disabled={aiChatLoading || !chatInput.trim()}>שלח</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showTripSettings && (
+        <div className="modal-backdrop" onClick={() => setShowTripSettings(false)} role="presentation">
+          <div className="modal-shell trip-settings-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="section-head"><strong>⚙️ הגדרות הטיול</strong><button type="button" onClick={() => setShowTripSettings(false)}>✕</button></div>
+            <div className="form-stack" style={{ padding: "1rem" }}>
+              <label>שם הטיול<input value={tripConfig.tripName} onChange={(e) => setTripConfig((c) => ({ ...c, tripName: e.target.value }))} /></label>
+              <label>יעד<input value={tripConfig.destination} onChange={(e) => setTripConfig((c) => ({ ...c, destination: e.target.value }))} placeholder="למשל: London" /></label>
+              <label>שעת התחלת יום<input type="number" min={0} max={23} value={tripConfig.dayStartHour} onChange={(e) => setTripConfig((c) => ({ ...c, dayStartHour: Number(e.target.value) }))} /></label>
+              <label>שעת סיום יום<input type="number" min={0} max={23} value={tripConfig.dayEndHour} onChange={(e) => setTripConfig((c) => ({ ...c, dayEndHour: Number(e.target.value) }))} /></label>
+              <label>תחילת הפסקת צהריים<input type="number" min={0} max={23} value={tripConfig.lunchBreakStart} onChange={(e) => setTripConfig((c) => ({ ...c, lunchBreakStart: Number(e.target.value) }))} /></label>
+              <label>סוף הפסקת צהריים<input type="number" min={0} max={23} value={tripConfig.lunchBreakEnd} onChange={(e) => setTripConfig((c) => ({ ...c, lunchBreakEnd: Number(e.target.value) }))} /></label>
+            </div>
+            <div className="inline-actions" style={{ padding: "0 1rem 1rem" }}>
+              <button type="button" onClick={() => setShowTripSettings(false)}>שמור וסגור</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showFlights && (
+        <div className="modal-backdrop" onClick={() => setShowFlights(false)} role="presentation">
+          <div className="modal-shell flights-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="section-head"><strong>✈️ טיסות</strong><button type="button" onClick={() => setShowFlights(false)}>✕</button></div>
+            <div style={{ padding: "0 1rem" }}>
+              {flights.map((f) => (
+                <div key={f.id} className="flight-item">
+                  <span>{f.type === "arrival" ? "🛬 הגעה" : "🛫 יציאה"}</span>
+                  <span>{f.flightDate} {f.flightTime}</span>
+                  <span>{f.airport}{f.flightNumber ? ` · ${f.flightNumber}` : ""}</span>
+                  <button type="button" className="danger" onClick={() => removeFlight(f.id)}>✕</button>
+                </div>
+              ))}
+              {!flights.length && <p>עדיין לא הוזנו טיסות.</p>}
+              <div className="flight-add-form form-stack" style={{ marginTop: "1rem" }}>
+                <label>סוג<select value={flightDraft.type || "arrival"} onChange={(e) => setFlightDraft((d) => ({ ...d, type: e.target.value as "arrival" | "departure" }))}><option value="arrival">הגעה</option><option value="departure">יציאה</option></select></label>
+                <label>תאריך<input type="date" value={flightDraft.flightDate || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightDate: e.target.value }))} /></label>
+                <label>שעה<input type="time" value={flightDraft.flightTime || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightTime: e.target.value }))} /></label>
+                <label>שדה תעופה<input value={flightDraft.airport || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, airport: e.target.value }))} placeholder="למשל: LHR" /></label>
+                <label>מספר טיסה<input value={flightDraft.flightNumber || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightNumber: e.target.value }))} placeholder="למשל: LY315" /></label>
+                <label>זמן העברה (דקות)<input type="number" value={flightDraft.transferMinutes ?? 45} onChange={(e) => setFlightDraft((d) => ({ ...d, transferMinutes: Number(e.target.value) }))} /></label>
+                <div className="inline-actions"><button type="button" onClick={addFlight}>הוסף טיסה</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
