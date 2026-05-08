@@ -508,6 +508,13 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // ── start ─────────────────────────────────────────────────────────────────────
 
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+});
+
 const PORT = process.env.PORT || 3001;
 
 initSchema()
