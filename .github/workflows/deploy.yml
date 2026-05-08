@@ -1,0 +1,254 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Bump version
+        id: bump_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION_BUMP="${{ github.event.inputs.version_bump }}"
+          else
+            VERSION_BUMP="patch"
+          fi
+
+          echo "📦 Bumping version: ${VERSION_BUMP}"
+
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: ${CURRENT_VERSION}"
+
+          npm version ${VERSION_BUMP} --no-git-tag-version
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "New version: ${NEW_VERSION}"
+
+          # Bump backend version
+          cd backend
+          npm version ${VERSION_BUMP} --no-git-tag-version
+          cd ..
+
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+
+          git add package.json package-lock.json backend/package.json
+          if git diff --staged --quiet; then
+            echo "No version changes to commit"
+          else
+            git commit -m "chore: bump version to ${NEW_VERSION} [skip ci]"
+          fi
+
+      - name: Push version changes
+        if: steps.bump_version.outputs.version != ''
+        run: |
+          git push origin HEAD:${{ github.ref }} || echo "Push failed or nothing to push"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        env:
+          VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
+        run: npm run build
+
+      - name: Verify frontend build
+        run: |
+          if [ ! -f "dist/index.html" ]; then
+            echo "❌ Frontend build failed!"
+            exit 1
+          fi
+          echo "✅ Frontend build verified"
+          ls -lah dist/
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          cat >> ~/.ssh/config << 'EOF'
+          Host *
+            ServerAliveInterval 60
+            ServerAliveCountMax 3
+            TCPKeepAlive yes
+            ConnectTimeout 30
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Stop backend on server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/root/fledz-travel' }}
+        run: |
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} bash << EOF
+            set -e
+            DEPLOY_PATH="${DEPLOY_PATH}"
+            mkdir -p \${DEPLOY_PATH}/backend
+            mkdir -p /var/www/fledz-travel
+            pm2 stop fledz-travel-backend 2>/dev/null || true
+            pm2 delete fledz-travel-backend 2>/dev/null || true
+            sleep 2
+            echo "✅ Backend stopped"
+          EOF
+
+      - name: Copy frontend build to server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+          NGINX_WEB_ROOT: ${{ secrets.NGINX_WEB_ROOT || '/var/www/fledz-travel' }}
+        run: |
+          echo "📦 Copying frontend build..."
+          rsync -avz --delete dist/ ${DEPLOY_USER}@${DEPLOY_HOST}:${NGINX_WEB_ROOT}/
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} bash << EOF
+            chown -R www-data:www-data ${NGINX_WEB_ROOT} 2>/dev/null || true
+            chmod -R 755 ${NGINX_WEB_ROOT}
+            echo "✅ Frontend files deployed"
+            ls -lah ${NGINX_WEB_ROOT}/ | head -10
+          EOF
+
+      - name: Copy backend files to server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/root/fledz-travel' }}
+        run: |
+          echo "📦 Copying backend files..."
+          rsync -avz --exclude 'node_modules' --exclude '.env' --exclude '.env.*' \
+            backend/ ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/backend/
+
+          echo "📦 Copying ecosystem config..."
+          rsync -avz ecosystem.config.cjs ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/
+
+          echo "📦 Copying nginx config..."
+          rsync -avz deployment/configs/nginx.conf ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/fledz-travel-nginx.conf
+
+      - name: Update nginx configuration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+        run: |
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} bash << 'NGINX_EOF'
+            set -e
+            NGINX_SITES_DIR="/etc/nginx/sites-available"
+            NGINX_ENABLED_DIR="/etc/nginx/sites-enabled"
+            SITE_NAME="fledz-travel"
+
+            mkdir -p ${NGINX_SITES_DIR} ${NGINX_ENABLED_DIR}
+
+            cp /tmp/fledz-travel-nginx.conf ${NGINX_SITES_DIR}/${SITE_NAME}
+            ln -sf ${NGINX_SITES_DIR}/${SITE_NAME} ${NGINX_ENABLED_DIR}/${SITE_NAME}
+
+            if nginx -t 2>&1; then
+              echo "✅ Nginx config valid"
+              systemctl reload nginx
+              echo "✅ Nginx reloaded"
+            else
+              echo "❌ Nginx config invalid!"
+              exit 1
+            fi
+          NGINX_EOF
+
+      - name: Install backend dependencies and start
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/root/fledz-travel' }}
+        run: |
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} bash << EOF
+            set -e
+            DEPLOY_PATH="${DEPLOY_PATH}"
+
+            echo "📦 Installing backend dependencies..."
+            cd \${DEPLOY_PATH}/backend
+            npm ci --production
+
+            echo "🚀 Starting backend with PM2..."
+            cd \${DEPLOY_PATH}
+            pm2 startOrRestart ecosystem.config.cjs
+            pm2 save
+
+            echo "✅ Backend started"
+            sleep 5
+
+            echo "🧪 Health check..."
+            for i in {1..5}; do
+              if curl -sf http://localhost:3001/api/health > /dev/null 2>&1; then
+                echo "✅ Backend healthy!"
+                break
+              fi
+              echo "⏳ Waiting... (attempt \$i/5)"
+              sleep 3
+              if [ \$i -eq 5 ]; then
+                echo "⚠️  Backend health check failed"
+                pm2 logs fledz-travel-backend --lines 30 --nostream || true
+              fi
+            done
+          EOF
+
+      - name: Verify deployment
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+          NGINX_WEB_ROOT: ${{ secrets.NGINX_WEB_ROOT || '/var/www/fledz-travel' }}
+        run: |
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} bash << 'EOF'
+            echo "📋 Frontend files:"
+            ls -lah /var/www/fledz-travel/ | head -10
+            echo ""
+            echo "📋 Nginx status:"
+            nginx -t 2>&1
+            echo ""
+            echo "📋 PM2 status:"
+            pm2 list
+          EOF
+          echo "✅ Deployed: ${{ steps.bump_version.outputs.version }}"
+          echo "🌐 https://travel.blox.co.il"
+
+      - name: Cleanup temp files
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+        run: |
+          ssh ${DEPLOY_USER}@${DEPLOY_HOST} "rm -f /tmp/fledz-travel-nginx.conf" || true
