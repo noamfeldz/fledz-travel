@@ -11,7 +11,7 @@ type ViewKey = "home" | "saved" | "hotel" | "map" | "planner";
 type Place = { id: string; name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; rating?: number; tips: string[]; imageUrl: string; sourceUrl?: string; instagramUrl?: string; station?: string; lat: number; lng: number; websiteUrl?: string; phoneNumber?: string; googleMapsUrl?: string; googlePlaceId?: string; businessStatus?: string; };
 type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; websiteUrl: string; phoneNumber: string; googleMapsUrl: string; googlePlaceId: string; businessStatus: string; };
 type Hotel = { name: string; address: string; lat: number; lng: number; };
-type DayPlan = { id: string; title: string; placeIds: string[]; };
+type DayPlan = { id: string; title: string; placeIds: string[]; pinnedPlaceIds: string[]; };
 type GooglePlacePrediction = {
   place_id: string;
   description: string;
@@ -28,7 +28,52 @@ const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string |
 const defaultPlaceImage = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80";
 const emptyPlaceDraft: PlaceDraft = { name: "", shortDescription: "", address: "", openingHours: "", type: "אטרקציה", area: "", imageUrl: "", sourceUrl: "", instagramUrl: "", station: "", tips: "", lat: "", lng: "", websiteUrl: "", phoneNumber: "", googleMapsUrl: "", googlePlaceId: "", businessStatus: "" };
 const defaultHotel: Hotel = { name: "Park Plaza Victoria London", address: "239 Vauxhall Bridge Road, London SW1V 1EQ", lat: 51.4952, lng: -0.1439 };
-const defaultPlans: DayPlan[] = [{ id: "day-1", title: "יום 1: מרכז העיר", placeIds: ["london-eye", "hyde-park"] }, { id: "day-2", title: "יום 2: מוזיאון ושוק", placeIds: ["natural-history", "camden-market"] }];
+const WEEK_DAY_COUNT = 7;
+function createWeekPlan(index: number): DayPlan {
+  return { id: `day-${index + 1}`, title: `יום ${index + 1}`, placeIds: [], pinnedPlaceIds: [] };
+}
+function normalizeDayPlans(plans: DayPlan[] | null | undefined): DayPlan[] {
+  const basePlans = Array.from({ length: WEEK_DAY_COUNT }, (_, index) => createWeekPlan(index));
+  const existingPlans = Array.isArray(plans) ? plans.filter(Boolean) : [];
+  const seenPlaceIds = new Set<string>();
+  const normalized = basePlans.map((basePlan, index) => {
+    const currentPlan = existingPlans[index];
+    if (!currentPlan) return basePlan;
+    const uniquePlaceIds = (currentPlan.placeIds || []).filter((placeId) => {
+      if (!placeId || seenPlaceIds.has(placeId)) return false;
+      seenPlaceIds.add(placeId);
+      return true;
+    });
+    return {
+      id: currentPlan.id || basePlan.id,
+      title: currentPlan.title?.trim() || basePlan.title,
+      placeIds: uniquePlaceIds,
+      pinnedPlaceIds: Array.from(new Set((currentPlan.pinnedPlaceIds || []).filter((placeId) => uniquePlaceIds.includes(placeId)))),
+    };
+  });
+
+  if (existingPlans.length <= WEEK_DAY_COUNT) return normalized;
+
+  return normalized.concat(
+    existingPlans.slice(WEEK_DAY_COUNT).map((plan, index) => ({
+      id: plan.id || `extra-day-${index + 1}`,
+      title: plan.title?.trim() || `יום נוסף ${index + 1}`,
+      placeIds: Array.from(new Set((plan.placeIds || []).filter((placeId) => {
+        if (!placeId || seenPlaceIds.has(placeId)) return false;
+        seenPlaceIds.add(placeId);
+        return true;
+      }))),
+      pinnedPlaceIds: Array.from(new Set((plan.pinnedPlaceIds || []).filter(Boolean))),
+    })),
+  ).map((plan) => ({
+    ...plan,
+    pinnedPlaceIds: plan.pinnedPlaceIds.filter((placeId) => plan.placeIds.includes(placeId)),
+  }));
+}
+const defaultPlans: DayPlan[] = normalizeDayPlans([
+  { id: "day-1", title: "יום 1", placeIds: ["london-eye", "hyde-park"], pinnedPlaceIds: [] },
+  { id: "day-2", title: "יום 2", placeIds: ["natural-history", "camden-market"], pinnedPlaceIds: [] },
+]);
 const seededPlaces: Place[] = [
   { id: "london-eye", name: "London Eye", shortDescription: "גלגל ענק עם תצפית מרשימה על נהר התמזה ומרכז העיר.", address: "Riverside Building, County Hall, London SE1 7PB", openingHours: "11:00-18:00", type: "אטרקציה", area: "South Bank", rating: 4.7, tips: ["כדאי להזמין מראש", "עמוס בשעות אחר הצהריים", "מתאים גם לילדים"], imageUrl: "https://images.unsplash.com/photo-1526129318478-62ed807ebdf9?auto=format&fit=crop&w=1200&q=80", sourceUrl: "https://www.londoneye.com/", instagramUrl: "https://www.instagram.com/explore/tags/londoneye/", station: "Waterloo Station", lat: 51.5033, lng: -0.1196 },
   { id: "hyde-park", name: "Hyde Park", shortDescription: "פארק גדול ונעים להליכה, מנוחה, פיקניק ושיט רגוע.", address: "Hyde Park, London W2 2UH", openingHours: "05:00-00:00", type: "פארק", area: "Central London", rating: 4.8, tips: ["מצוין לבוקר רגוע", "כדאי לשלב עם Kensington", "נוח עם עגלות"], imageUrl: "https://images.unsplash.com/photo-1473773508845-188df298d2d1?auto=format&fit=crop&w=1200&q=80", sourceUrl: "https://www.royalparks.org.uk/visit/parks/hyde-park", instagramUrl: "https://www.instagram.com/explore/tags/hydepark/", station: "Hyde Park Corner", lat: 51.5073, lng: -0.1657 },
@@ -50,6 +95,90 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
 function estimateTransport(distanceKm: number): { mode: TransportMode; minutes: number } { if (distanceKm < 1.2) return { mode: "הליכה", minutes: Math.max(8, Math.round(distanceKm * 14)) }; if (distanceKm < 5) return { mode: "אוטובוס", minutes: Math.round(distanceKm * 8 + 8) }; if (distanceKm < 8) return { mode: "רכבת תחתית", minutes: Math.round(distanceKm * 5 + 10) }; return { mode: "שילוב", minutes: Math.round(distanceKm * 5 + 18) }; }
 function formatDistance(distanceKm: number) { return `${distanceKm.toFixed(1)} ק"מ`; }
 function plannerComfort(placeIds: string[], places: Place[]) { if (placeIds.length < 2) return { label: "יום רגוע", tone: "good" as const }; const tripDistances = placeIds.map((placeId, index) => { if (!index) return 0; const prev = places.find((p) => p.id === placeIds[index - 1]); const current = places.find((p) => p.id === placeId); return prev && current ? haversineKm(prev, current) : 0; }).slice(1); const average = tripDistances.reduce((sum, value) => sum + value, 0) / tripDistances.length; if (average < 2.5) return { label: "סדר יום נוח", tone: "good" as const }; if (average < 5) return { label: "יום סביר עם קצת נסיעות", tone: "ok" as const }; return { label: "כדאי לקרב בין המקומות", tone: "warn" as const }; }
+function stopEventPropagation(event: React.SyntheticEvent) { event.stopPropagation(); }
+function getVisitDurationHours(type: PlaceType) {
+  switch (type) {
+    case "מוזיאון": return 2.5;
+    case "פארק": return 1.5;
+    case "אוכל": return 1.25;
+    case "ילדים": return 2;
+    default: return 2;
+  }
+}
+function parseOpeningStartHour(openingHours: string) {
+  const match = openingHours.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  return Number(match[1]) + Number(match[2]) / 60;
+}
+function formatHourLabel(hour: number) {
+  const normalized = Math.max(0, hour);
+  const wholeHours = Math.floor(normalized);
+  const minutes = Math.round((normalized - wholeHours) * 60);
+  const safeHours = `${wholeHours}`.padStart(2, "0");
+  const safeMinutes = `${minutes}`.padStart(2, "0");
+  return `${safeHours}:${safeMinutes}`;
+}
+function getDayPartLabel(hour: number) {
+  if (hour < 12) return "בוקר";
+  if (hour < 16) return "צהריים";
+  return "ערב";
+}
+function buildDayTimeline(day: DayPlan, places: Place[], hotel: Hotel) {
+  const dayPlaces = day.placeIds.map((placeId) => places.find((place) => place.id === placeId)).filter(Boolean) as Place[];
+  let currentHour = 9;
+  let previousStop: Place | Hotel = hotel;
+  return dayPlaces.map((place) => {
+    const travelMinutes = estimateTransport(haversineKm(previousStop, place)).minutes;
+    const openingStart = parseOpeningStartHour(place.openingHours);
+    const suggestedStart = currentHour + travelMinutes / 60;
+    const startHour = openingStart ? Math.max(suggestedStart, openingStart) : suggestedStart;
+    const endHour = startHour + getVisitDurationHours(place.type);
+    previousStop = place;
+    currentHour = endHour;
+    return {
+      place,
+      startLabel: formatHourLabel(startHour),
+      endLabel: formatHourLabel(endHour),
+      dayPart: getDayPartLabel(startHour),
+      travelMinutes,
+      isTight: endHour > 19.5,
+    };
+  });
+}
+function sortPlacesForPlanner(places: Place[], hotel: Hotel) {
+  return [...places].sort((left, right) => {
+    const areaCompare = (left.area || "zzz").localeCompare(right.area || "zzz");
+    if (areaCompare !== 0) return areaCompare;
+    return haversineKm(hotel, left) - haversineKm(hotel, right);
+  });
+}
+function autoDistributeWeek(dayPlans: DayPlan[], places: Place[], hotel: Hotel) {
+  const normalizedPlans = normalizeDayPlans(dayPlans);
+  const placeById = new Map(places.map((place) => [place.id, place]));
+  const pinnedPlaceIds = new Set(normalizedPlans.flatMap((day) => day.pinnedPlaceIds));
+  const nextPlans = normalizedPlans.map((day) => ({
+    ...day,
+    placeIds: day.placeIds.filter((placeId) => day.pinnedPlaceIds.includes(placeId) && placeById.has(placeId)),
+    pinnedPlaceIds: day.pinnedPlaceIds.filter((placeId) => placeById.has(placeId)),
+  }));
+  const candidates = sortPlacesForPlanner(places.filter((place) => !pinnedPlaceIds.has(place.id)), hotel);
+
+  for (const place of candidates) {
+    const bestDay = nextPlans.reduce<{ index: number; score: number } | null>((best, day, index) => {
+      const assignedPlaces = day.placeIds.map((placeId) => placeById.get(placeId)).filter(Boolean) as Place[];
+      const lastPlace = assignedPlaces[assignedPlaces.length - 1] || null;
+      const tripDistance = lastPlace ? haversineKm(lastPlace, place) : haversineKm(hotel, place);
+      const sameAreaCount = assignedPlaces.filter((assignedPlace) => assignedPlace.area && assignedPlace.area === place.area).length;
+      const score = day.placeIds.length * 4 + tripDistance - sameAreaCount * 1.25;
+      if (!best || score < best.score) return { index, score };
+      return best;
+    }, null);
+
+    if (bestDay) nextPlans[bestDay.index].placeIds.push(place.id);
+  }
+
+  return nextPlans;
+}
 async function geocodeAddress(address: string) { const encoded = encodeURIComponent(address); const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encoded}`, { headers: { Accept: "application/json" } }); if (!response.ok) throw new Error("failed"); const data = (await response.json()) as Array<{ lat: string; lon: string }>; if (!data.length) throw new Error("not-found"); return { lat: Number(data[0].lat), lng: Number(data[0].lon) }; }
 function buildPlaceId(name: string) { return `${name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "place"}-${Date.now()}`; }
 function placeToDraft(place: Place): PlaceDraft { return { name: place.name, shortDescription: place.shortDescription, address: place.address, openingHours: place.openingHours, type: place.type, area: place.area, imageUrl: place.imageUrl === defaultPlaceImage ? "" : place.imageUrl, sourceUrl: place.sourceUrl || "", instagramUrl: place.instagramUrl || "", station: place.station || "", tips: place.tips.join(", "), lat: String(place.lat), lng: String(place.lng), websiteUrl: place.websiteUrl || "", phoneNumber: place.phoneNumber || "", googleMapsUrl: place.googleMapsUrl || "", googlePlaceId: place.googlePlaceId || "", businessStatus: place.businessStatus || "" }; }
@@ -96,7 +225,7 @@ function App() {
   const [places, setPlaces] = useState<Place[]>(() => readLocalStorage(STORAGE_KEYS.places, seededPlaces));
   const [savedIds, setSavedIds] = useState<string[]>(() => readLocalStorage(STORAGE_KEYS.saved, ["london-eye", "hyde-park"]));
   const [hotel, setHotel] = useState<Hotel>(() => readLocalStorage(STORAGE_KEYS.hotel, defaultHotel));
-  const [dayPlans, setDayPlans] = useState<DayPlan[]>(() => readLocalStorage(STORAGE_KEYS.plans, defaultPlans));
+  const [dayPlans, setDayPlans] = useState<DayPlan[]>(() => normalizeDayPlans(readLocalStorage(STORAGE_KEYS.plans, defaultPlans)));
   const [dbReady, setDbReady] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("הכול");
@@ -125,6 +254,10 @@ function App() {
   const googleMapsLoaderRef = useRef<Promise<void> | null>(null);
   const [addPlaceMode, setAddPlaceMode] = useState<"search" | "link" | "manual">("search");
   const [autocompleteSelected, setAutocompleteSelected] = useState(false);
+  const [draggedPlace, setDraggedPlace] = useState<{ placeId: string; sourceDayId: string | null } | null>(null);
+  const [dragTarget, setDragTarget] = useState<{ dayId: string; targetPlaceId: string | null } | null>(null);
+  const [openPlaceMenu, setOpenPlaceMenu] = useState<string | null>(null);
+  useEffect(() => { if (!openPlaceMenu) return; const close = () => setOpenPlaceMenu(null); document.addEventListener("click", close); return () => document.removeEventListener("click", close); }, [openPlaceMenu]);
   const selectedPlaceId = getPlaceIdFromPathname(location.pathname);
   const selectedPlace = useMemo(() => selectedPlaceId ? places.find((place) => place.id === selectedPlaceId) ?? null : null, [places, selectedPlaceId]);
   const modalPlace = useMemo(() => modalPlaceId ? places.find((place) => place.id === modalPlaceId) ?? null : null, [modalPlaceId, places]);
@@ -164,7 +297,7 @@ function App() {
       if (Array.isArray(dbPlaces) && dbPlaces.length > 0) setPlaces(dbPlaces as Place[]);
       if (Array.isArray(dbSaved)) setSavedIds(dbSaved as string[]);
       if (dbHotel) setHotel(dbHotel as Hotel);
-      if (Array.isArray(dbPlans) && dbPlans.length > 0) setDayPlans(dbPlans as DayPlan[]);
+      if (Array.isArray(dbPlans)) setDayPlans(normalizeDayPlans(dbPlans as DayPlan[]));
       setDbReady(true);
     }).catch(() => {
       // API not available — continue with localStorage only
@@ -310,6 +443,26 @@ function App() {
   const savedPlaces = useMemo(() => places.filter((place) => savedIds.includes(place.id)), [places, savedIds]);
   const filteredPlaces = useMemo(() => places.filter((place) => { const q = query.toLowerCase(); const matchesQuery = !query.trim() || place.name.toLowerCase().includes(q) || place.shortDescription.toLowerCase().includes(q) || place.address.toLowerCase().includes(q); const matchesType = typeFilter === "הכול" || place.type === typeFilter; const matchesArea = areaFilter === "הכול" || place.area === areaFilter; return matchesQuery && matchesType && matchesArea; }), [areaFilter, places, query, typeFilter]);
   const areaOptions = useMemo(() => baseAreas.concat(places.map((place) => place.area).filter(Boolean)).filter((area, index, all) => all.indexOf(area) === index), [places]);
+  const assignedDayByPlaceId = useMemo(() => dayPlans.reduce<Record<string, string>>((result, day) => {
+    day.placeIds.forEach((placeId) => {
+      if (!result[placeId]) result[placeId] = day.id;
+    });
+    return result;
+  }, {}), [dayPlans]);
+  const pinnedDayByPlaceId = useMemo(() => dayPlans.reduce<Record<string, string>>((result, day) => {
+    day.pinnedPlaceIds.forEach((placeId) => {
+      if (!result[placeId]) result[placeId] = day.id;
+    });
+    return result;
+  }, {}), [dayPlans]);
+  const plannedPlacesCount = useMemo(() => Object.keys(assignedDayByPlaceId).length, [assignedDayByPlaceId]);
+  const unplannedPlaces = useMemo(() => places.filter((place) => !assignedDayByPlaceId[place.id]), [assignedDayByPlaceId, places]);
+  const activeDaysCount = useMemo(() => dayPlans.filter((day) => day.placeIds.length > 0).length, [dayPlans]);
+  const pinnedPlacesCount = useMemo(() => Object.keys(pinnedDayByPlaceId).length, [pinnedDayByPlaceId]);
+  const timelineByDayId = useMemo(() => dayPlans.reduce<Record<string, ReturnType<typeof buildDayTimeline>>>((result, day) => {
+    result[day.id] = buildDayTimeline(day, places, hotel);
+    return result;
+  }, {}), [dayPlans, hotel, places]);
   const resetPlaceEditor = () => { setPlaceDraft(emptyPlaceDraft); setEditingPlaceId(null); setImportUrl(""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setAddPlaceMode("search"); setAutocompleteSelected(false); };
   const updatePlaceDraft = <K extends keyof PlaceDraft>(key: K, value: PlaceDraft[K]) => setPlaceDraft((current) => ({ ...current, [key]: value }));
   const toggleSave = (placeId: string) => setSavedIds((current) => current.includes(placeId) ? current.filter((id) => id !== placeId) : [...current, placeId]);
@@ -373,10 +526,62 @@ function App() {
     if (editingPlaceId) { setPlaceDraft(placeToDraft(nextPlace)); setImportUrl(nextPlace.sourceUrl || nextPlace.instagramUrl || ""); navigate(getPlacePath(nextPlace.id)); }
     else { resetPlaceEditor(); setIsAddingPlace(false); navigate(getPlacePath(nextPlace.id)); }
   }
-  const addPlanDay = () => setDayPlans((current) => [...current, { id: `day-${Date.now()}`, title: `יום ${current.length + 1}`, placeIds: [] }]);
-  const addPlaceToDay = (dayId: string, placeId: string) => { if (!placeId) return; setDayPlans((current) => current.map((day) => day.id === dayId && !day.placeIds.includes(placeId) ? { ...day, placeIds: [...day.placeIds, placeId] } : day)); };
+  const addPlaceToDay = (dayId: string, placeId: string, options?: { pinOnAssign?: boolean }) => {
+    if (!placeId) return;
+    const shouldPinOnAssign = Boolean(options?.pinOnAssign);
+    setDayPlans((current) => current.map((day) => {
+      const wasPinned = day.pinnedPlaceIds.includes(placeId);
+      const nextPlaceIds = day.placeIds.filter((id) => id !== placeId);
+      const nextPinnedPlaceIds = day.pinnedPlaceIds.filter((id) => id !== placeId);
+      if (day.id !== dayId) {
+        if (nextPlaceIds.length === day.placeIds.length && nextPinnedPlaceIds.length === day.pinnedPlaceIds.length) return day;
+        return { ...day, placeIds: nextPlaceIds, pinnedPlaceIds: nextPinnedPlaceIds };
+      }
+      return {
+        ...day,
+        placeIds: [...nextPlaceIds, placeId],
+        pinnedPlaceIds: wasPinned || shouldPinOnAssign ? [...nextPinnedPlaceIds, placeId] : nextPinnedPlaceIds,
+      };
+    }));
+  };
   const movePlace = (dayId: string, index: number, direction: -1 | 1) => setDayPlans((current) => current.map((day) => { if (day.id !== dayId) return day; const nextIndex = index + direction; if (nextIndex < 0 || nextIndex >= day.placeIds.length) return day; const reordered = [...day.placeIds]; [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]]; return { ...day, placeIds: reordered }; }));
-  const removePlaceFromDay = (dayId: string, placeId: string) => setDayPlans((current) => current.map((day) => day.id === dayId ? { ...day, placeIds: day.placeIds.filter((id) => id !== placeId) } : day));
+  const removePlaceFromDay = (dayId: string, placeId: string) => setDayPlans((current) => current.map((day) => day.id === dayId ? { ...day, placeIds: day.placeIds.filter((id) => id !== placeId), pinnedPlaceIds: day.pinnedPlaceIds.filter((id) => id !== placeId) } : day));
+  const clearPlaceAssignment = (placeId: string) => setDayPlans((current) => current.map((day) => day.placeIds.includes(placeId) || day.pinnedPlaceIds.includes(placeId) ? { ...day, placeIds: day.placeIds.filter((id) => id !== placeId), pinnedPlaceIds: day.pinnedPlaceIds.filter((id) => id !== placeId) } : day));
+  const clearDayPlan = (dayId: string) => setDayPlans((current) => current.map((day) => day.id === dayId ? { ...day, placeIds: [], pinnedPlaceIds: [] } : day));
+  const togglePlacePin = (dayId: string, placeId: string) => setDayPlans((current) => current.map((day) => {
+    if (day.id !== dayId || !day.placeIds.includes(placeId)) return day;
+    const isPinned = day.pinnedPlaceIds.includes(placeId);
+    return { ...day, pinnedPlaceIds: isPinned ? day.pinnedPlaceIds.filter((id) => id !== placeId) : [...day.pinnedPlaceIds, placeId] };
+  }));
+  const autoFillWeek = () => setDayPlans((current) => autoDistributeWeek(current, places, hotel));
+  const movePlaceByDrag = (sourceDayId: string | null, placeId: string, targetDayId: string, targetPlaceId?: string | null) => {
+    setDayPlans((current) => {
+      const isPinned = current.some((day) => day.pinnedPlaceIds.includes(placeId));
+      return current.map((day) => {
+        const nextPlaceIds = day.placeIds.filter((id) => id !== placeId);
+        const nextPinnedIds = day.pinnedPlaceIds.filter((id) => id !== placeId);
+        if (day.id !== targetDayId) {
+          if (nextPlaceIds.length === day.placeIds.length && nextPinnedIds.length === day.pinnedPlaceIds.length) return day;
+          return { ...day, placeIds: nextPlaceIds, pinnedPlaceIds: nextPinnedIds };
+        }
+        const insertIndex = targetPlaceId ? Math.max(0, nextPlaceIds.indexOf(targetPlaceId)) : nextPlaceIds.length;
+        const reordered = [...nextPlaceIds];
+        reordered.splice(insertIndex, 0, placeId);
+        return { ...day, placeIds: reordered, pinnedPlaceIds: isPinned ? [...nextPinnedIds, placeId] : nextPinnedIds };
+      });
+    });
+    setDraggedPlace(null);
+    setDragTarget(null);
+  };
+  const handlePlaceDragStart = (sourceDayId: string | null, placeId: string) => setDraggedPlace({ sourceDayId, placeId });
+  const handlePlaceDragEnd = () => {
+    setDraggedPlace(null);
+    setDragTarget(null);
+  };
+  const handleDayDrop = (targetDayId: string, targetPlaceId?: string | null) => {
+    if (!draggedPlace) return;
+    movePlaceByDrag(draggedPlace.sourceDayId, draggedPlace.placeId, targetDayId, targetPlaceId);
+  };
   const renderPlaceDetails = (place: Place, options?: { isModal?: boolean; onClose?: () => void }) => {
     const transport = estimateTransport(haversineKm(hotel, place));
     const isModal = options?.isModal;
@@ -480,11 +685,11 @@ function App() {
       <main className="content-stack">
         {selectedPlaceId && !selectedPlace && <section className="panel"><div className="section-head"><div><h2>המקום לא נמצא</h2><span>יכול להיות שהוא נמחק או שכתובת העמוד לא תקינה.</span></div><button type="button" onClick={() => navigate("/")}>חזרה למקומות</button></div></section>}
         {selectedPlace && <>{renderPlaceDetails(selectedPlace)}{editingPlaceId === selectedPlace.id && renderPlaceForm("עריכת מקום", "כאן אפשר לערוך את כל המידע הרלוונטי של המקום.", "שמירת שינויים", stopEditingPlace)}</>}
-        {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section><section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const isSaved = savedIds.includes(place.id); return <article key={place.id} className="place-card place-card-clickable" onClick={() => openPlaceModal(place.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openPlaceModal(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><span className="chip">{place.type}</span><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div><div className="card-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggleSave(place.id); }}>{isSaved ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={(event) => { event.stopPropagation(); startEditingPlace(place); }}>עריכה</button></div></div></article>; })}</section></>}
-        {!selectedPlaceId && activeView === "saved" && <section><div className="section-head"><h2>מקומות שמורים</h2><span>{savedPlaces.length} נשמרו</span></div><div className="saved-list">{savedPlaces.map((place) => { const distanceKm = haversineKm(hotel, place); const travel = estimateTransport(distanceKm); return <div key={place.id} className="saved-item"><div><strong>{place.name}</strong><p>{travel.mode} | {travel.minutes} דק' | {place.station || "תחנה תתווסף בהמשך"}</p></div><div className="inline-actions"><button className="secondary-button" type="button" onClick={() => openPlaceModal(place.id)}>פתיחה</button><button type="button" onClick={() => toggleSave(place.id)}>הסר</button></div></div>; })}{!savedPlaces.length && <p>עדיין לא שמרת מקומות. אפשר לחזור למסך המקומות ולבחור.</p>}</div></section>}
+        {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section><section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const isSaved = savedIds.includes(place.id); const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <article key={place.id} className="place-card place-card-clickable" onClick={() => openPlaceModal(place.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openPlaceModal(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><span className="chip">{place.type}</span><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div><div className="planner-assignment" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}><label>שיבוץ ליום<select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); return; } addPlaceToDay(nextDayId, place.id); }}><option value="">עדיין לא שובץ</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></label>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div><div className="card-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggleSave(place.id); }}>{isSaved ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={(event) => { event.stopPropagation(); startEditingPlace(place); }}>עריכה</button></div></div></article>; })}</section></>}
+        {!selectedPlaceId && activeView === "saved" && <section><div className="section-head"><h2>מקומות שמורים</h2><span>{savedPlaces.length} נשמרו</span></div><div className="saved-list">{savedPlaces.map((place) => { const distanceKm = haversineKm(hotel, place); const travel = estimateTransport(distanceKm); const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <div key={place.id} className="saved-item"><div><strong>{place.name}</strong><p>{travel.mode} | {travel.minutes} דק' | {place.station || "תחנה תתווסף בהמשך"}</p>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div><div className="saved-item-tools"><label>שיבוץ<select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); return; } addPlaceToDay(nextDayId, place.id); }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></label><div className="inline-actions"><button className="secondary-button" type="button" onClick={() => openPlaceModal(place.id)}>פתיחה</button><button type="button" onClick={() => toggleSave(place.id)}>הסר</button></div></div></div>; })}{!savedPlaces.length && <p>עדיין לא שמרת מקומות. אפשר לחזור למסך המקומות ולבחור.</p>}</div></section>}
         {!selectedPlaceId && activeView === "hotel" && <section><div className="section-head"><div><h2>המלון שלך</h2><span>מכאן מחושבים המרחקים וזמני ההגעה</span></div><button type="button" onClick={() => setIsEditingHotel((current) => !current)}>{isEditingHotel ? "סגירת עריכה" : "עריכת מלון"}</button></div><button className="secondary-button" type="button" onClick={applyDefaultHotel} style={{marginBottom: "1rem"}}>שימוש במלון שלנו: Park Plaza Victoria London</button><div className="hotel-status"><strong>{hotel.name}</strong><p>{hotel.address}</p><p>מיקום שמור: {hotel.lat.toFixed(4)}, {hotel.lng.toFixed(4)}</p>{hotelLookupState === "loading" && <p>מחפש את המיקום לפי הכתובת...</p>}{hotelLookupState === "done" && <p>המלון נשמר והמרחקים עודכנו.</p>}{hotelLookupState === "error" && <p>לא הצלחנו למצוא את הכתובת אוטומטית. אפשר לשמור קווי אורך ורוחב ידנית.</p>}</div>{isEditingHotel && <form className="form-layout" style={{marginTop: "1.5rem"}} onSubmit={handleHotelSubmit}><div className="form-stack"><label>שם המלון<input name="name" defaultValue={hotel.name} /></label><label>כתובת<input name="address" defaultValue={hotel.address} /></label><label>קו רוחב<input name="lat" defaultValue={hotel.lat} /></label><label>קו אורך<input name="lng" defaultValue={hotel.lng} /></label></div><div className="inline-actions"><button type="submit">שמירת מלון</button></div></form>}</section>}
-        {!selectedPlaceId && activeView === "map" && <section className="map-panel"><div className="section-head"><h2>מפת המקומות</h2><span>מציגה את המלון ואת המקומות ששמרת</span></div><MapContainer center={[hotel.lat, hotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}><Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup></Marker>{savedPlaces.map((place) => { const trip = estimateTransport(haversineKm(hotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer><div className="map-legend"><div className="legend-row"><span className="legend-chip hotel">Hotel</span><span className="legend-chip place">Places</span></div>{savedPlaces.map((place) => <div key={place.id} className="saved-item compact"><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}</div></section>}
-        {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>תכנון יומי</h2><span>אפשר לבנות ימים ולבדוק אם סדר המקומות נוח</span></div><button type="button" onClick={addPlanDay}>הוספת יום</button></div>{dayPlans.map((day) => { const comfort = plannerComfort(day.placeIds, places); return <article key={day.id} className="panel"><div className="day-head"><div><h3>{day.title}</h3><span className={`comfort ${comfort.tone}`}>{comfort.label}</span></div><select defaultValue="" onChange={(event) => addPlaceToDay(day.id, event.target.value)}><option value="" disabled>הוספת מקום ליום</option>{places.map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}</select></div><div className="day-places">{day.placeIds.map((placeId, index) => { const place = places.find((item) => item.id === placeId); if (!place) return null; return <div key={place.id} className="day-place"><div><strong>{index + 1}. {place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div><div className="day-actions"><button type="button" onClick={() => movePlace(day.id, index, -1)}>למעלה</button><button type="button" onClick={() => movePlace(day.id, index, 1)}>למטה</button><button type="button" onClick={() => removePlaceFromDay(day.id, place.id)}>הסר</button></div></div>; })}{!day.placeIds.length && <p>עדיין אין מקומות ביום הזה. אפשר להתחיל להוסיף.</p>}</div></article>; })}</section>}
+        {!selectedPlaceId && activeView === "map" && <section className="map-panel"><div className="section-head"><h2>מפת המקומות</h2><span>מציגה את המלון ואת כל המקומות</span></div><MapContainer center={[hotel.lat, hotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}><Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup></Marker>{places.map((place) => { const trip = estimateTransport(haversineKm(hotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer><div className="map-legend"><div className="legend-row"><span className="legend-chip hotel">Hotel</span><span className="legend-chip place">Places</span></div>{places.map((place) => <div key={place.id} className="saved-item compact"><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}</div></section>}
+        {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>לו"ז לשבוע</h2><span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר</span></div><div className="planner-toolbar"><span>{activeDaysCount} ימים פעילים</span><button type="button" onClick={autoFillWeek}>חלוקה אוטומטית</button></div></div><div className="planner-summary-grid"><article className="planner-summary-card"><strong>{plannedPlacesCount}</strong><span>מקומות שובצו</span></article><article className="planner-summary-card"><strong>{unplannedPlaces.length}</strong><span>עדיין בלי יום</span></article><article className="planner-summary-card"><strong>{pinnedPlacesCount}</strong><span>מקומות מעוגנים</span></article><article className="planner-summary-card"><strong>{places.length}</strong><span>סה"כ מקומות</span></article></div>{!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-compact" draggable onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}{dayPlans.map((day) => { const comfort = plannerComfort(day.placeIds, places); const timeline = timelineByDayId[day.id] || []; return <article key={day.id} className="panel"><div className="day-head"><div><h3>{day.title}</h3><span className={`comfort ${comfort.tone}`}>{comfort.label}</span></div><div className="day-head-actions"><select value="" onChange={(event) => addPlaceToDay(day.id, event.target.value)}><option value="">הוספת מקום ליום</option>{places.map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}</select><button className="secondary-button" type="button" onClick={() => clearDayPlan(day.id)} disabled={!day.placeIds.length}>ניקוי יום</button></div></div><div className={`planner-image-grid day-drop-zone${dragTarget?.dayId === day.id && !dragTarget.targetPlaceId ? " active" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: null }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, null); }}><div className="planner-drop-hint">גרור מקום לכאן כדי לשבץ או לשנות סדר</div>{day.placeIds.map((placeId, index) => { const place = places.find((item) => item.id === placeId); if (!place) return null; const isPinned = day.pinnedPlaceIds.includes(place.id); return <article key={place.id} className={`planner-place-card${isPinned ? " is-pinned" : ""}${dragTarget?.dayId === day.id && dragTarget.targetPlaceId === place.id ? " drag-target" : ""}`} draggable onDragStart={() => handlePlaceDragStart(day.id, place.id)} onDragEnd={handlePlaceDragEnd} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: place.id }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, place.id); }}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><div className="planner-place-top"><strong>{index + 1}. {place.name}</strong><span className="planner-place-type">{place.type}</span></div><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p>{isPinned && <span className="pin-indicator">מעוגן ולא יוזז אוטומטית</span>}<div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); const key = `${day.id}:${place.id}`; setOpenPlaceMenu((prev) => prev === key ? null : key); }}>⋯</button>{openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}</div></div></article>; })}{!day.placeIds.length && <p>עדיין אין מקומות ביום הזה. אפשר להתחיל להוסיף או לגרור לכאן.</p>}</div>{!!timeline.length && <section className="day-timeline"><div className="section-head compact"><div><h3>חלוקה יומית משוערת</h3><span>עוזר לראות אם היום עמוס מדי לפי שעות, משך ביקור ומעברים</span></div></div><div className="timeline-list">{timeline.map((entry) => <div key={`${day.id}-${entry.place.id}`} className={`timeline-item${entry.isTight ? " tight" : ""}`}><div className="timeline-time"><strong>{entry.startLabel}</strong><span>{entry.endLabel}</span></div><div className="timeline-dot" /><div className="timeline-body"><div className="timeline-top"><strong>{entry.place.name}</strong><span>{entry.dayPart}</span></div><p>{entry.place.type} | {entry.travelMinutes} דק' הגעה | {Math.round(getVisitDurationHours(entry.place.type) * 60)} דק' ביקור</p></div></div>)}</div></section>}</article>; })}</section>}
       </main>
       {isAddingPlace && (
         <div className="add-dialog-backdrop" onClick={(e) => { if (e.target === e.currentTarget) cancelAddingPlace(); }} role="presentation">
