@@ -458,7 +458,7 @@ app.post('/api/ai/plan', async (req, res) => {
       'החזר JSON בלבד (ללא markdown, ללא טקסט נוסף):',
       '{"plan":{"day-1":["id1","id2"],"day-2":["id3"]},"excluded":[{"placeId":"id","reason":"סיבה"}],"recommendations":["המלצה 1"],"summary":"סיכום קצר"}',
     ].join('\n');
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
     let text = result.response.text().trim();
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -483,7 +483,7 @@ app.post('/api/ai/chat', async (req, res) => {
       '',
       systemContext,
     ].join('\n');
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const chat = model.startChat({
       history: [
         { role: 'user', parts: [{ text: systemPrompt }] },
@@ -519,7 +519,12 @@ const PORT = process.env.PORT || 3001;
 
 initSchema()
   .then(() => {
-    app.listen(PORT, () => console.log(`🚀 fledz-api running on http://localhost:${PORT}`));
+    const httpServer = app.listen(PORT, () =>
+      console.log(`🚀 fledz-api running on http://localhost:${PORT}`)
+    );
+    // Explicitly keep the event loop alive (pg v8 / Node 24 compatibility)
+    httpServer.ref();
+    setInterval(() => {}, 1 << 30);
   })
   .catch((e) => {
     console.error('Failed to init schema:', e);
