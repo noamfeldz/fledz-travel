@@ -177,7 +177,41 @@ jobs:
 
             mkdir -p ${NGINX_SITES_DIR} ${NGINX_ENABLED_DIR}
 
-            cp /tmp/fledz-travel-nginx.conf ${NGINX_SITES_DIR}/${SITE_NAME}
+            # Use HTTPS config if cert exists, otherwise HTTP-only
+            CERT_PATH="/etc/letsencrypt/live/travel.blox.co.il/fullchain.pem"
+            if [ -f "${CERT_PATH}" ]; then
+              echo "✅ SSL cert found — deploying HTTPS config"
+              cp /tmp/fledz-travel-nginx.conf ${NGINX_SITES_DIR}/${SITE_NAME}
+            else
+              echo "⚠️  No SSL cert yet — deploying HTTP-only config"
+              cat > ${NGINX_SITES_DIR}/${SITE_NAME} << 'HTTP_CONF'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name travel.blox.co.il;
+
+    root /var/www/fledz-travel;
+    index index.html;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location /api/ {
+        proxy_pass http://localhost:3002/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+HTTP_CONF
+            fi
+
             ln -sf ${NGINX_SITES_DIR}/${SITE_NAME} ${NGINX_ENABLED_DIR}/${SITE_NAME}
 
             if nginx -t 2>&1; then
@@ -186,6 +220,7 @@ jobs:
               echo "✅ Nginx reloaded"
             else
               echo "❌ Nginx config invalid!"
+              nginx -t
               exit 1
             fi
           NGINX_EOF
