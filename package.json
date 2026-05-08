@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "maps:check": "node scripts/check-google-maps-key.mjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

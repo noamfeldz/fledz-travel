@@ -1,5 +1,5 @@
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -8,13 +8,19 @@ import "leaflet/dist/leaflet.css";
 type PlaceType = "אטרקציה" | "מוזיאון" | "פארק" | "אוכל" | "ילדים";
 type TransportMode = "הליכה" | "אוטובוס" | "רכבת תחתית" | "שילוב";
 type ViewKey = "home" | "saved" | "hotel" | "map" | "planner";
-type Place = { id: string; name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; rating?: number; tips: string[]; imageUrl: string; sourceUrl?: string; instagramUrl?: string; station?: string; lat: number; lng: number; };
-type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; };
+type Place = { id: string; name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; rating?: number; tips: string[]; imageUrl: string; sourceUrl?: string; instagramUrl?: string; station?: string; lat: number; lng: number; websiteUrl?: string; phoneNumber?: string; googleMapsUrl?: string; googlePlaceId?: string; businessStatus?: string; };
+type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; websiteUrl: string; phoneNumber: string; googleMapsUrl: string; googlePlaceId: string; businessStatus: string; };
 type Hotel = { name: string; address: string; lat: number; lng: number; };
 type DayPlan = { id: string; title: string; placeIds: string[]; };
+type GooglePlacePrediction = {
+  place_id: string;
+  description: string;
+  structured_formatting?: { main_text?: string; secondary_text?: string };
+};
 const STORAGE_KEYS = { places: "fledz-places", saved: "fledz-saved", hotel: "fledz-hotel", plans: "fledz-plans" };
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const defaultPlaceImage = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80";
-const emptyPlaceDraft: PlaceDraft = { name: "", shortDescription: "", address: "", openingHours: "", type: "אטרקציה", area: "", imageUrl: "", sourceUrl: "", instagramUrl: "", station: "", tips: "", lat: "", lng: "" };
+const emptyPlaceDraft: PlaceDraft = { name: "", shortDescription: "", address: "", openingHours: "", type: "אטרקציה", area: "", imageUrl: "", sourceUrl: "", instagramUrl: "", station: "", tips: "", lat: "", lng: "", websiteUrl: "", phoneNumber: "", googleMapsUrl: "", googlePlaceId: "", businessStatus: "" };
 const defaultHotel: Hotel = { name: "Park Plaza Victoria London", address: "239 Vauxhall Bridge Road, London SW1V 1EQ", lat: 51.4952, lng: -0.1439 };
 const defaultPlans: DayPlan[] = [{ id: "day-1", title: "יום 1: מרכז העיר", placeIds: ["london-eye", "hyde-park"] }, { id: "day-2", title: "יום 2: מוזיאון ושוק", placeIds: ["natural-history", "camden-market"] }];
 const seededPlaces: Place[] = [
@@ -40,14 +46,54 @@ function formatDistance(distanceKm: number) { return `${distanceKm.toFixed(1)} �
 function plannerComfort(placeIds: string[], places: Place[]) { if (placeIds.length < 2) return { label: "יום רגוע", tone: "good" as const }; const tripDistances = placeIds.map((placeId, index) => { if (!index) return 0; const prev = places.find((p) => p.id === placeIds[index - 1]); const current = places.find((p) => p.id === placeId); return prev && current ? haversineKm(prev, current) : 0; }).slice(1); const average = tripDistances.reduce((sum, value) => sum + value, 0) / tripDistances.length; if (average < 2.5) return { label: "סדר יום נוח", tone: "good" as const }; if (average < 5) return { label: "יום סביר עם קצת נסיעות", tone: "ok" as const }; return { label: "כדאי לקרב בין המקומות", tone: "warn" as const }; }
 async function geocodeAddress(address: string) { const encoded = encodeURIComponent(address); const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encoded}`, { headers: { Accept: "application/json" } }); if (!response.ok) throw new Error("failed"); const data = (await response.json()) as Array<{ lat: string; lon: string }>; if (!data.length) throw new Error("not-found"); return { lat: Number(data[0].lat), lng: Number(data[0].lon) }; }
 function buildPlaceId(name: string) { return `${name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "place"}-${Date.now()}`; }
-function placeToDraft(place: Place): PlaceDraft { return { name: place.name, shortDescription: place.shortDescription, address: place.address, openingHours: place.openingHours, type: place.type, area: place.area, imageUrl: place.imageUrl === defaultPlaceImage ? "" : place.imageUrl, sourceUrl: place.sourceUrl || "", instagramUrl: place.instagramUrl || "", station: place.station || "", tips: place.tips.join(", "), lat: String(place.lat), lng: String(place.lng) }; }
+function placeToDraft(place: Place): PlaceDraft { return { name: place.name, shortDescription: place.shortDescription, address: place.address, openingHours: place.openingHours, type: place.type, area: place.area, imageUrl: place.imageUrl === defaultPlaceImage ? "" : place.imageUrl, sourceUrl: place.sourceUrl || "", instagramUrl: place.instagramUrl || "", station: place.station || "", tips: place.tips.join(", "), lat: String(place.lat), lng: String(place.lng), websiteUrl: place.websiteUrl || "", phoneNumber: place.phoneNumber || "", googleMapsUrl: place.googleMapsUrl || "", googlePlaceId: place.googlePlaceId || "", businessStatus: place.businessStatus || "" }; }
 function formatCoordinate(value: number) { return String(Number(value.toFixed(6))); }
 function decodeLinkText(value: string) { return decodeURIComponent(value).replace(/\+/g, " ").replace(/[_-]+/g, " ").trim(); }
 function extractCoordinatesFromText(value: string) { const atMatch = value.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/); if (atMatch) return { lat: Number(atMatch[1]), lng: Number(atMatch[2]) }; const markerMatch = value.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/); if (markerMatch) return { lat: Number(markerMatch[1]), lng: Number(markerMatch[2]) }; return null; }
 function extractCoordinatesFromParam(value: string) { const pairMatch = value.match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/); return pairMatch ? { lat: Number(pairMatch[1]), lng: Number(pairMatch[2]) } : null; }
+function extractAreaFromAddressComponents(components: Array<{ long_name: string; types: string[] }> | undefined) {
+  if (!components) return "";
+  const priorityTypes = ["locality", "sublocality", "sublocality_level_1", "neighborhood", "administrative_area_level_2", "administrative_area_level_1"];
+  for (const type of priorityTypes) {
+    const match = components.find((component) => component.types.includes(type));
+    if (match) return match.long_name;
+  }
+  return "";
+}
+function describeGoogleMapsLoadError(detail: string) {
+  if (detail.includes("ApiNotActivatedMapError")) return "Google Maps JavaScript API לא הופעל בפרויקט הזה ב-Google Cloud. צריך להפעיל Maps JavaScript API וגם Places API.";
+  if (detail.includes("InvalidKeyMapError")) return "המפתח של Google Maps לא תקין.";
+  if (detail.includes("RefererNotAllowedMapError")) return "הדומיין/הפורט הנוכחי לא מאושר בהגבלות ה-HTTP referrer של המפתח.";
+  if (detail.includes("BillingNotEnabledMapError")) return "Billing לא מופעל בפרויקט של Google Cloud.";
+  if (detail.includes("places-namespace-unavailable")) return "Google Maps נטען, אבל ספריית Places לא זמינה עדיין.";
+  if (detail.includes("script-load-failed")) return "סקריפט Google Maps לא הצליח להיטען מהרשת.";
+  return detail;
+}
 function parsePlaceLink(rawUrl: string): Partial<PlaceDraft> { const url = new URL(rawUrl.trim()); const parsed: Partial<PlaceDraft> = { sourceUrl: url.toString() }; const hostname = url.hostname.replace(/^www\./, "").toLowerCase(); const decodedPath = decodeLinkText(url.pathname); const decodedHref = decodeURIComponent(url.toString()); const coordinates = extractCoordinatesFromText(decodedHref); if (coordinates) { parsed.lat = formatCoordinate(coordinates.lat); parsed.lng = formatCoordinate(coordinates.lng); } for (const key of ["query", "q", "ll", "sll", "destination", "daddr"]) { const value = url.searchParams.get(key); if (!value) continue; const pair = extractCoordinatesFromParam(value); if (pair && !parsed.lat && !parsed.lng) { parsed.lat = formatCoordinate(pair.lat); parsed.lng = formatCoordinate(pair.lng); continue; } if (!pair) { parsed.address = decodeLinkText(value); parsed.name = decodeLinkText(value).split(",")[0]; break; } } const placePathMatch = decodedPath.match(/\/place\/(.+?)(?:\/|$)/i); if (placePathMatch) { const label = placePathMatch[1].trim(); parsed.name = parsed.name || label.split(",")[0]; parsed.address = parsed.address || label; } const searchPathMatch = decodedPath.match(/\/search\/(.+?)(?:\/|$)/i); if (searchPathMatch && !parsed.name) { parsed.name = searchPathMatch[1].split(",")[0]; parsed.address = parsed.address || searchPathMatch[1]; } if (hostname.includes("instagram.com")) parsed.instagramUrl = url.toString(); if (!parsed.name && hostname.includes("google.") && decodedPath) parsed.name = decodedPath.split("/").filter(Boolean).pop() || ""; return parsed; }
 
 const getIconForRoute = (key: string, isActive: boolean) => {
+  const strokeWidth = isActive ? 2.5 : 2;
+  const color = "currentColor";
+  switch(key) {
+    case "home": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>;
+    case "saved": return <svg width="24" height="24" viewBox="0 0 24 24" fill={isActive ? "currentColor" : "none"} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>;
+    case "hotel": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M10 22v-6.57"/><path d="M12 11h.01"/><path d="M12 7h.01"/><path d="M14 15.43V22"/><path d="M15 16a5 5 0 0 0-6 0"/><path d="M16 11h.01"/><path d="M16 7h.01"/><path d="M8 11h.01"/><path d="M8 7h.01"/><rect x="4" y="2" width="16" height="20" rx="2"/></svg>;
+    case "map": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>;
+    case "planner": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
+    default: return null;
+  }
+};
+
+function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [places, setPlaces] = useState<Place[]>(() => readLocalStorage(STORAGE_KEYS.places, seededPlaces));
+  const [savedIds, setSavedIds] = useState<string[]>(() => readLocalStorage(STORAGE_KEYS.saved, ["london-eye", "hyde-park"]));
+  const [hotel, setHotel] = useState<Hotel>(() => readLocalStorage(STORAGE_KEYS.hotel, defaultHotel));
+  const [dayPlans, setDayPlans] = useState<DayPlan[]>(() => readLocalStorage(STORAGE_KEYS.plans, defaultPlans));
+  const [query, setQuery] = useState("");
+
+
   const strokeWidth = isActive ? 2.5 : 2;
   const color = "currentColor";
   switch(key) {
@@ -75,9 +121,22 @@ function App() {
   const [editingPlaceId, setEditingPlaceId] = useState<string | null>(null);
   const [placeFormState, setPlaceFormState] = useState<{ tone: "idle" | "loading" | "success" | "error"; message: string }>({ tone: "idle", message: "" });
   const [importUrl, setImportUrl] = useState("");
+  // Debounce auto-import when user types a link
+  useEffect(() => {
+    if (!importUrl.trim()) return;
+    const timer = setTimeout(() => {
+      // Trigger import without requiring button click
+      fetchAndSetImport(importUrl);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [importUrl]);
+  const [mapAutocompleteState, setMapAutocompleteState] = useState<{ tone: "idle" | "loading" | "ready" | "error"; message: string }>({ tone: "idle", message: "" });
+  const [googleMapsReady, setGoogleMapsReady] = useState(false);
   const [linkImportState, setLinkImportState] = useState<{ tone: "idle" | "loading" | "success" | "error"; message: string }>({ tone: "idle", message: "" });
   const [isAddingPlace, setIsAddingPlace] = useState(false);
   const [isEditingHotel, setIsEditingHotel] = useState(false);
+  const placeAutocompleteHostRef = useRef<HTMLDivElement | null>(null);
+  const googleMapsLoaderRef = useRef<Promise<void> | null>(null);
   const selectedPlaceId = getPlaceIdFromPathname(location.pathname);
   const selectedPlace = useMemo(() => selectedPlaceId ? places.find((place) => place.id === selectedPlaceId) ?? null : null, [places, selectedPlaceId]);
   const activeView = selectedPlaceId ? null : getViewFromPathname(location.pathname);
@@ -86,6 +145,136 @@ function App() {
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.hotel, JSON.stringify(hotel)); }, [hotel]);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.plans, JSON.stringify(dayPlans)); }, [dayPlans]);
   useEffect(() => { const legacyPath = getLegacyPathFromHash(location.hash); if (legacyPath && legacyPath !== location.pathname) { navigate(legacyPath, { replace: true }); return; } const isKnownPath = getViewFromPathname(location.pathname) || selectedPlaceId; if (!isKnownPath) navigate("/", { replace: true }); }, [location.hash, location.pathname, navigate, selectedPlaceId]);
+  useEffect(() => {
+    let cancelled = false;
+    let widget: HTMLElement | null = null;
+
+    async function setupAutocomplete() {
+      if (!GOOGLE_MAPS_API_KEY) {
+        setMapAutocompleteState({ tone: "error", message: "כדי לקבל השלמה אוטומטית נדרש VITE_GOOGLE_MAPS_API_KEY." });
+        setGoogleMapsReady(false);
+        return;
+      }
+
+      try {
+        if (!googleMapsLoaderRef.current) {
+          googleMapsLoaderRef.current = new Promise<void>((resolve, reject) => {
+            if (window.google?.maps?.importLibrary) {
+              resolve();
+              return;
+            }
+
+            const existingScript = document.querySelector<HTMLScriptElement>('script[data-google-maps-js="true"]');
+            if (existingScript) {
+              existingScript.addEventListener("load", () => resolve(), { once: true });
+              existingScript.addEventListener("error", () => reject(new Error("script-load-failed")), { once: true });
+              return;
+            }
+
+            (window as any).__codexGoogleMapsInit = () => resolve();
+            const script = document.createElement("script");
+            script.dataset.googleMapsJs = "true";
+            script.async = true;
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&loading=async&libraries=places&v=weekly&callback=__codexGoogleMapsInit`;
+            script.onerror = () => reject(new Error("script-load-failed"));
+            document.head.appendChild(script);
+          }).finally(() => {
+            delete (window as any).__codexGoogleMapsInit;
+          });
+        }
+
+        await googleMapsLoaderRef.current;
+        const google = window.google as any;
+        const placesLibrary = await google.maps.importLibrary("places");
+        if (cancelled) return;
+
+        const { PlaceAutocompleteElement } = placesLibrary as {
+          PlaceAutocompleteElement: new (options?: { includedRegionCodes?: string[]; locationBias?: { center: { lat: number; lng: number }; radius: number } }) => HTMLElement;
+        };
+        const host = placeAutocompleteHostRef.current;
+        if (!host) return;
+
+        host.innerHTML = "";
+        const autocomplete = new PlaceAutocompleteElement({
+          includedRegionCodes: ["gb"],
+          locationBias: { center: { lat: 51.5074, lng: -0.1278 }, radius: 50000 },
+        });
+        autocomplete.setAttribute("placeholder", "חיפוש ב-Google Maps לפי שם מקום או כתובת");
+        autocomplete.className = "place-autocomplete-widget";
+
+        autocomplete.addEventListener("gmp-select", async (event: any) => {
+          const placePrediction = event.placePrediction;
+          const place = placePrediction.toPlace();
+          try {
+            await place.fetchFields({
+              fields: [
+                "displayName",
+                "formattedAddress",
+                "location",
+                "addressComponents",
+                "businessStatus",
+                "nationalPhoneNumber",
+                "websiteURI",
+                "googleMapsURI",
+                "regularOpeningHours",
+                "rating",
+                "photos",
+              ],
+            });
+            const displayName = place.displayName?.toString?.() || place.displayName || "";
+            const formattedAddress = place.formattedAddress || "";
+            const latitude = place.location?.lat?.();
+            const longitude = place.location?.lng?.();
+            const photoUrl = place.photos?.[0]?.getUrl?.({ maxWidth: 1400, maxHeight: 900 }) || "";
+            const area = extractAreaFromAddressComponents(place.addressComponents);
+            const openingHours = place.regularOpeningHours?.weekdayDescriptions?.join(" | ") || "";
+
+            setPlaceDraft((current) => ({
+              ...current,
+              name: displayName || current.name,
+              shortDescription: current.shortDescription || "נמשך מ-Google Places",
+              address: formattedAddress || current.address,
+              openingHours: openingHours || current.openingHours,
+              area: area || current.area,
+              imageUrl: photoUrl || current.imageUrl,
+              sourceUrl: place.googleMapsURI || current.sourceUrl,
+              websiteUrl: place.websiteURI || current.websiteUrl,
+              phoneNumber: place.nationalPhoneNumber || current.phoneNumber,
+              googleMapsUrl: place.googleMapsURI || current.googleMapsUrl,
+              googlePlaceId: place.id || current.googlePlaceId,
+              businessStatus: place.businessStatus || current.businessStatus,
+              lat: Number.isFinite(latitude) ? formatCoordinate(latitude) : current.lat,
+              lng: Number.isFinite(longitude) ? formatCoordinate(longitude) : current.lng,
+            }));
+            setMapAutocompleteState({ tone: "ready", message: "הפרטים נטענו מ-Google Places. אפשר לשמור את המקום." });
+            setPlaceFormState({ tone: "success", message: "הפרטים נטענו מ-Google Places. אפשר לשמור את המקום." });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            setMapAutocompleteState({ tone: "error", message: `נבחר מקום, אבל טעינת הפרטים נכשלה: ${detail}` });
+          }
+        });
+
+        host.appendChild(autocomplete);
+        widget = autocomplete;
+        setMapAutocompleteState({ tone: "ready", message: "השלמה אוטומטית מוכנה." });
+        setGoogleMapsReady(true);
+      } catch (error) {
+        const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        console.error("Google Maps load failed", error);
+        setMapAutocompleteState({ tone: "error", message: `לא הצלחתי לטעון את Google Maps. ${describeGoogleMapsLoadError(detail)}` });
+        setGoogleMapsReady(false);
+      }
+    }
+
+    setupAutocomplete();
+
+    return () => {
+      cancelled = true;
+      if (widget && widget.parentElement) {
+        widget.parentElement.removeChild(widget);
+      }
+    };
+  }, []);
   const savedPlaces = useMemo(() => places.filter((place) => savedIds.includes(place.id)), [places, savedIds]);
   const filteredPlaces = useMemo(() => places.filter((place) => { const q = query.toLowerCase(); const matchesQuery = !query.trim() || place.name.toLowerCase().includes(q) || place.shortDescription.toLowerCase().includes(q) || place.address.toLowerCase().includes(q); const matchesType = typeFilter === "הכול" || place.type === typeFilter; const matchesArea = areaFilter === "הכול" || place.area === areaFilter; return matchesQuery && matchesType && matchesArea; }), [areaFilter, places, query, typeFilter]);
   const areaOptions = useMemo(() => baseAreas.concat(places.map((place) => place.area).filter(Boolean)).filter((area, index, all) => all.indexOf(area) === index), [places]);
@@ -96,10 +285,20 @@ function App() {
   const cancelAddingPlace = () => { resetPlaceEditor(); setIsAddingPlace(false); };
   const startEditingPlace = (place: Place) => { setEditingPlaceId(place.id); setPlaceDraft(placeToDraft(place)); setImportUrl(place.sourceUrl || place.instagramUrl || ""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setIsAddingPlace(false); navigate(getPlacePath(place.id)); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const stopEditingPlace = () => resetPlaceEditor();
-  async function handleImportLink() {
-    if (!importUrl.trim()) { setLinkImportState({ tone: "error", message: "צריך להדביק קודם לינק." }); return; }
+  async function fetchAndSetImport(url: string) {
     try {
       setLinkImportState({ tone: "loading", message: "מנסה למשוך פרטים מהלינק..." });
+      const parsed = parsePlaceLink(url);
+      if (parsed.address && (!parsed.lat || !parsed.lng)) {
+        try { const coordinates = await geocodeAddress(parsed.address); parsed.lat = formatCoordinate(coordinates.lat); parsed.lng = formatCoordinate(coordinates.lng); } catch {}
+      }
+      setPlaceDraft((current) => ({ ...current, ...Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === "string" && value.trim())) }));
+      setLinkImportState({ tone: "success", message: "הפרטים נטענו מהקישור. אפשר לשמור את המקום." });
+    } catch {
+      setLinkImportState({ tone: "error", message: "כשלון בטעינת הקישור. ודא שהקישור תקין." });
+    }
+  }
+  async function handleImportLink() {
       const parsed = parsePlaceLink(importUrl);
       if (parsed.address && (!parsed.lat || !parsed.lng)) {
         try { const coordinates = await geocodeAddress(parsed.address); parsed.lat = formatCoordinate(coordinates.lat); parsed.lng = formatCoordinate(coordinates.lng); } catch {}
@@ -131,7 +330,7 @@ function App() {
       catch { setPlaceFormState({ tone: "error", message: "לא הצלחתי לאתר את המיקום מהכתובת. אפשר להוסיף ידנית קו רוחב וקו אורך." }); return; }
     }
     const existingPlace = editingPlaceId ? places.find((place) => place.id === editingPlaceId) : undefined;
-    const nextPlace: Place = { id: existingPlace?.id || buildPlaceId(name), name, shortDescription: placeDraft.shortDescription.trim() || "נוסף ידנית", address, openingHours: placeDraft.openingHours.trim(), type: placeDraft.type, area: placeDraft.area.trim(), rating: existingPlace?.rating, tips: placeDraft.tips.split(",").map((item) => item.trim()).filter(Boolean), imageUrl: placeDraft.imageUrl.trim() || existingPlace?.imageUrl || defaultPlaceImage, sourceUrl: placeDraft.sourceUrl.trim() || undefined, instagramUrl: placeDraft.instagramUrl.trim() || undefined, station: placeDraft.station.trim() || undefined, lat, lng };
+    const nextPlace: Place = { id: existingPlace?.id || buildPlaceId(name), name, shortDescription: placeDraft.shortDescription.trim() || "נוסף ידנית", address, openingHours: placeDraft.openingHours.trim(), type: placeDraft.type, area: placeDraft.area.trim(), rating: existingPlace?.rating, tips: placeDraft.tips.split(",").map((item) => item.trim()).filter(Boolean), imageUrl: placeDraft.imageUrl.trim() || existingPlace?.imageUrl || defaultPlaceImage, sourceUrl: placeDraft.sourceUrl.trim() || undefined, instagramUrl: placeDraft.instagramUrl.trim() || undefined, station: placeDraft.station.trim() || undefined, lat, lng, websiteUrl: placeDraft.websiteUrl.trim() || existingPlace?.websiteUrl || undefined, phoneNumber: placeDraft.phoneNumber.trim() || existingPlace?.phoneNumber || undefined, googleMapsUrl: placeDraft.googleMapsUrl.trim() || existingPlace?.googleMapsUrl || undefined, googlePlaceId: placeDraft.googlePlaceId.trim() || existingPlace?.googlePlaceId || undefined, businessStatus: placeDraft.businessStatus.trim() || existingPlace?.businessStatus || undefined };
     setPlaces((current) => editingPlaceId ? current.map((place) => place.id === editingPlaceId ? nextPlace : place) : [nextPlace, ...current]);
     setPlaceFormState({ tone: "success", message: editingPlaceId ? "השינויים נשמרו." : "המקום נוסף לרשימה." });
     setLinkImportState({ tone: "idle", message: "" });
@@ -146,6 +345,13 @@ function App() {
   const renderPlaceForm = (title: string, description: string, submitLabel: string, cancelAction?: () => void) => (
     <section className="panel">
       <div className="section-head"><div><h2>{title}</h2><span>{description}</span></div>{cancelAction && <button className="secondary-button" type="button" onClick={cancelAction}>ביטול</button>}</div>
+      <div className="google-search-panel">
+        <div ref={placeAutocompleteHostRef} className="google-autocomplete-host" />
+        <p className="google-search-note">
+          אפשר להתחיל להקליד ואז לבחור תוצאה מהרשימה. אם מפתח Google Maps מוגדר, אני אנסה למלא את הפרטים של המקום אוטומטית.
+        </p>
+        {mapAutocompleteState.message && <p className={`form-message ${mapAutocompleteState.tone}`}>{mapAutocompleteState.message}</p>}
+      </div>
       <div className="link-import"><input value={importUrl} onChange={(event) => setImportUrl(event.target.value)} placeholder="הדבקת לינק של Google Maps או Instagram" /><button type="button" onClick={handleImportLink}>ייבוא פרטים</button></div>
       {linkImportState.tone !== "idle" && <p className={`form-message ${linkImportState.tone}`}>{linkImportState.message}</p>}
       <form className="form-layout" onSubmit={handlePlaceSubmit}>
@@ -160,6 +366,8 @@ function App() {
           <label>תמונה<input value={placeDraft.imageUrl} onChange={(event) => updatePlaceDraft("imageUrl", event.target.value)} /></label>
           <label>לינק למקום<input value={placeDraft.sourceUrl} onChange={(event) => updatePlaceDraft("sourceUrl", event.target.value)} /></label>
           <label>אינסטגרם<input value={placeDraft.instagramUrl} onChange={(event) => updatePlaceDraft("instagramUrl", event.target.value)} /></label>
+          <label>אתר<input value={placeDraft.websiteUrl} onChange={(event) => updatePlaceDraft("websiteUrl", event.target.value)} placeholder="אתר העסק או השאר ריק" /></label>
+          <label>טלפון<input value={placeDraft.phoneNumber} onChange={(event) => updatePlaceDraft("phoneNumber", event.target.value)} placeholder="מספר טלפון אם יש" /></label>
           <label>טיפים<textarea rows={3} value={placeDraft.tips} onChange={(event) => updatePlaceDraft("tips", event.target.value)} placeholder="מופרדים בפסיקים" /></label>
           <label>קו רוחב<input value={placeDraft.lat} onChange={(event) => updatePlaceDraft("lat", event.target.value)} /></label>
           <label>קו אורך<input value={placeDraft.lng} onChange={(event) => updatePlaceDraft("lng", event.target.value)} /></label>
@@ -187,7 +395,7 @@ function App() {
       </nav>
       <main className="content-stack">
         {selectedPlaceId && !selectedPlace && <section className="panel"><div className="section-head"><div><h2>המקום לא נמצא</h2><span>יכול להיות שהוא נמחק או שכתובת העמוד לא תקינה.</span></div><button type="button" onClick={() => navigate("/")}>חזרה למקומות</button></div></section>}
-        {selectedPlace && <><section className="panel place-detail-hero"><img src={selectedPlace.imageUrl || defaultPlaceImage} alt={selectedPlace.name} className="place-detail-image" /><div className="place-detail-content"><div className="section-head"><div><div className="place-topline"><span className="chip">{selectedPlace.type}</span><span className="chip soft">{selectedPlace.area || "ללא אזור"}</span></div><h2>{selectedPlace.name}</h2><p className="detail-summary">{selectedPlace.shortDescription || "ללא תיאור"}</p></div><button className="secondary-button" type="button" onClick={() => navigate("/")}>חזרה למקומות</button></div><div className="inline-actions"><button type="button" onClick={() => toggleSave(selectedPlace.id)}>{savedIds.includes(selectedPlace.id) ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={() => startEditingPlace(selectedPlace)}>עריכת מקום</button></div><dl className="detail-grid"><div><dt>כתובת</dt><dd>{selectedPlace.address}</dd></div><div><dt>שעות פתיחה</dt><dd>{selectedPlace.openingHours || "לא הוזן"}</dd></div><div><dt>תחנה קרובה</dt><dd>{selectedPlace.station || "לא הוזן"}</dd></div><div><dt>דירוג</dt><dd>{selectedPlace.rating ? selectedPlace.rating.toFixed(1) : "חדש"}</dd></div><div><dt>מרחק מהמלון</dt><dd>{formatDistance(haversineKm(hotel, selectedPlace))}</dd></div><div><dt>הגעה משוערת</dt><dd>{placeTransport?.mode} | {placeTransport?.minutes} דק'</dd></div><div><dt>קו רוחב</dt><dd>{selectedPlace.lat.toFixed(5)}</dd></div><div><dt>קו אורך</dt><dd>{selectedPlace.lng.toFixed(5)}</dd></div></dl>{!!selectedPlace.tips.length && <section className="sub-panel"><h3>טיפים</h3><div className="tips-row">{selectedPlace.tips.map((tip) => <span key={tip} className="tip-pill">{tip}</span>)}</div></section>}{(selectedPlace.sourceUrl || selectedPlace.instagramUrl) && <section className="sub-panel"><h3>קישורים</h3><div className="inline-links">{selectedPlace.sourceUrl && <a href={selectedPlace.sourceUrl} target="_blank" rel="noreferrer">לינק למקום</a>}{selectedPlace.instagramUrl && <a href={selectedPlace.instagramUrl} target="_blank" rel="noreferrer">Instagram</a>}</div></section>}</div></section>{editingPlaceId === selectedPlace.id && renderPlaceForm("עריכת מקום", "כאן אפשר לערוך את כל המידע הרלוונטי של המקום.", "שמירת שינויים", stopEditingPlace)}</>}
+        {selectedPlace && <><section className="panel place-detail-hero"><img src={selectedPlace.imageUrl || defaultPlaceImage} alt={selectedPlace.name} className="place-detail-image" /><div className="place-detail-content"><div className="section-head"><div><div className="place-topline"><span className="chip">{selectedPlace.type}</span><span className="chip soft">{selectedPlace.area || "ללא אזור"}</span></div><h2>{selectedPlace.name}</h2><p className="detail-summary">{selectedPlace.shortDescription || "ללא תיאור"}</p></div><button className="secondary-button" type="button" onClick={() => navigate("/")}>חזרה למקומות</button></div><div className="inline-actions"><button type="button" onClick={() => toggleSave(selectedPlace.id)}>{savedIds.includes(selectedPlace.id) ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={() => startEditingPlace(selectedPlace)}>עריכת מקום</button></div><dl className="detail-grid"><div><dt>כתובת</dt><dd>{selectedPlace.address}</dd></div><div><dt>שעות פתיחה</dt><dd>{selectedPlace.openingHours || "לא הוזן"}</dd></div><div><dt>תחנה קרובה</dt><dd>{selectedPlace.station || "לא הוזן"}</dd></div><div><dt>דירוג</dt><dd>{selectedPlace.rating ? selectedPlace.rating.toFixed(1) : "חדש"}</dd></div><div><dt>טלפון</dt><dd>{selectedPlace.phoneNumber || "לא הוזן"}</dd></div><div><dt>אתר</dt><dd>{selectedPlace.websiteUrl ? <a href={selectedPlace.websiteUrl} target="_blank" rel="noreferrer">פתיחת אתר</a> : "לא הוזן"}</dd></div><div><dt>Google Maps</dt><dd>{selectedPlace.googleMapsUrl ? <a href={selectedPlace.googleMapsUrl} target="_blank" rel="noreferrer">פתיחה בגוגל מפות</a> : "לא הוזן"}</dd></div><div><dt>סטטוס</dt><dd>{selectedPlace.businessStatus || "לא הוזן"}</dd></div><div><dt>מרחק מהמלון</dt><dd>{formatDistance(haversineKm(hotel, selectedPlace))}</dd></div><div><dt>הגעה משוערת</dt><dd>{placeTransport?.mode} | {placeTransport?.minutes} דק'</dd></div><div><dt>קו רוחב</dt><dd>{selectedPlace.lat.toFixed(5)}</dd></div><div><dt>קו אורך</dt><dd>{selectedPlace.lng.toFixed(5)}</dd></div></dl>{!!selectedPlace.tips.length && <section className="sub-panel"><h3>טיפים</h3><div className="tips-row">{selectedPlace.tips.map((tip) => <span key={tip} className="tip-pill">{tip}</span>)}</div></section>}{(selectedPlace.sourceUrl || selectedPlace.instagramUrl) && <section className="sub-panel"><h3>קישורים</h3><div className="inline-links">{selectedPlace.sourceUrl && <a href={selectedPlace.sourceUrl} target="_blank" rel="noreferrer">לינק למקום</a>}{selectedPlace.instagramUrl && <a href={selectedPlace.instagramUrl} target="_blank" rel="noreferrer">Instagram</a>}</div></section>}</div></section>{editingPlaceId === selectedPlace.id && renderPlaceForm("עריכת מקום", "כאן אפשר לערוך את כל המידע הרלוונטי של המקום.", "שמירת שינויים", stopEditingPlace)}</>}
         {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section>{isAddingPlace && renderPlaceForm("הוספת מקום", "אפשר להוסיף ידנית או למשוך פרטים מלינק קיים.", "שמירת מקום", cancelAddingPlace)}<section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const isSaved = savedIds.includes(place.id); return <article key={place.id} className="place-card place-card-clickable" onClick={() => navigate(getPlacePath(place.id))} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); navigate(getPlacePath(place.id)); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><span className="chip">{place.type}</span><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div><div className="card-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggleSave(place.id); }}>{isSaved ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={(event) => { event.stopPropagation(); startEditingPlace(place); }}>עריכה</button></div></div></article>; })}</section></>}
         {!selectedPlaceId && activeView === "saved" && <section><div className="section-head"><h2>מקומות שמורים</h2><span>{savedPlaces.length} נשמרו</span></div><div className="saved-list">{savedPlaces.map((place) => { const distanceKm = haversineKm(hotel, place); const travel = estimateTransport(distanceKm); return <div key={place.id} className="saved-item"><div><strong>{place.name}</strong><p>{travel.mode} | {travel.minutes} דק' | {place.station || "תחנה תתווסף בהמשך"}</p></div><div className="inline-actions"><button className="secondary-button" type="button" onClick={() => navigate(getPlacePath(place.id))}>פתיחה</button><button type="button" onClick={() => toggleSave(place.id)}>הסר</button></div></div>; })}{!savedPlaces.length && <p>עדיין לא שמרת מקומות. אפשר לחזור למסך המקומות ולבחור.</p>}</div></section>}
         {!selectedPlaceId && activeView === "hotel" && <section><div className="section-head"><div><h2>המלון שלך</h2><span>מכאן מחושבים המרחקים וזמני ההגעה</span></div><button type="button" onClick={() => setIsEditingHotel((current) => !current)}>{isEditingHotel ? "סגירת עריכה" : "עריכת מלון"}</button></div><button className="secondary-button" type="button" onClick={applyDefaultHotel} style={{marginBottom: "1rem"}}>שימוש במלון שלנו: Park Plaza Victoria London</button><div className="hotel-status"><strong>{hotel.name}</strong><p>{hotel.address}</p><p>מיקום שמור: {hotel.lat.toFixed(4)}, {hotel.lng.toFixed(4)}</p>{hotelLookupState === "loading" && <p>מחפש את המיקום לפי הכתובת...</p>}{hotelLookupState === "done" && <p>המלון נשמר והמרחקים עודכנו.</p>}{hotelLookupState === "error" && <p>לא הצלחנו למצוא את הכתובת אוטומטית. אפשר לשמור קווי אורך ורוחב ידנית.</p>}</div>{isEditingHotel && <form className="form-layout" style={{marginTop: "1.5rem"}} onSubmit={handleHotelSubmit}><div className="form-stack"><label>שם המלון<input name="name" defaultValue={hotel.name} /></label><label>כתובת<input name="address" defaultValue={hotel.address} /></label><label>קו רוחב<input name="lat" defaultValue={hotel.lat} /></label><label>קו אורך<input name="lng" defaultValue={hotel.lng} /></label></div><div className="inline-actions"><button type="submit">שמירת מלון</button></div></form>}</section>}

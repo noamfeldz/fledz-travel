@@ -322,6 +322,29 @@ input:focus, select:focus, textarea:focus {
   flex: 1;
 }
 
+.google-search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(241, 245, 249, 0.7), rgba(255, 255, 255, 0.95));
+}
+
+.google-autocomplete-host,
+.place-autocomplete-widget {
+  width: 100%;
+  display: block;
+}
+
+.google-search-note {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
 .inline-actions {
   display: flex;
   gap: 0.75rem;
