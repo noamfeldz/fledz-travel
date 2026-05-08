@@ -823,26 +823,34 @@ input:focus, select:focus, textarea:focus {
   max-height: 90dvh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 -4px 32px rgba(0, 0, 0, 0.14);
+  /* border-radius on box requires a background wrapper for corners */
 }
 
-@media (min-width: 640px) {
-  .add-dialog-box {
-    border-radius: var(--radius-lg);
-    max-width: 520px;
-    max-height: 85dvh;
-    box-shadow: 0 8px 48px rgba(0, 0, 0, 0.2);
-  }
-}
-
+/* Give rounded corners via a pseudo element so we can keep overflow:visible */
 .add-dialog-header {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 1.25rem 1.25rem 0.875rem;
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+}
+
+@media (min-width: 640px) {
+  .add-dialog-box {
+    border-radius: var(--radius-lg);
+    max-width: 560px;
+    max-height: 85dvh;
+    box-shadow: 0 8px 48px rgba(0, 0, 0, 0.2);
+  }
+
+  .add-dialog-header {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
 }
 
 .add-dialog-header h2 {
@@ -898,8 +906,12 @@ input:focus, select:focus, textarea:focus {
 
 .add-dialog-body {
   flex: 1;
-  overflow-y: auto;
+  overflow-y: visible;
   padding: 1.25rem;
+}
+
+.add-dialog-body.scrollable {
+  overflow-y: auto;
 }
 
 .add-dialog-section {

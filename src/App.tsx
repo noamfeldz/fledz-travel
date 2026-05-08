@@ -18,6 +18,12 @@ type GooglePlacePrediction = {
   structured_formatting?: { main_text?: string; secondary_text?: string };
 };
 const STORAGE_KEYS = { places: "fledz-places", saved: "fledz-saved", hotel: "fledz-hotel", plans: "fledz-plans" };
+const API = "/api";
+async function apiFetch(path: string, options?: RequestInit) {
+  const res = await fetch(API + path, { headers: { "Content-Type": "application/json" }, ...options });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const defaultPlaceImage = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80";
 const emptyPlaceDraft: PlaceDraft = { name: "", shortDescription: "", address: "", openingHours: "", type: "אטרקציה", area: "", imageUrl: "", sourceUrl: "", instagramUrl: "", station: "", tips: "", lat: "", lng: "", websiteUrl: "", phoneNumber: "", googleMapsUrl: "", googlePlaceId: "", businessStatus: "" };
@@ -91,6 +97,7 @@ function App() {
   const [savedIds, setSavedIds] = useState<string[]>(() => readLocalStorage(STORAGE_KEYS.saved, ["london-eye", "hyde-park"]));
   const [hotel, setHotel] = useState<Hotel>(() => readLocalStorage(STORAGE_KEYS.hotel, defaultHotel));
   const [dayPlans, setDayPlans] = useState<DayPlan[]>(() => readLocalStorage(STORAGE_KEYS.plans, defaultPlans));
+  const [dbReady, setDbReady] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("הכול");
   const [areaFilter, setAreaFilter] = useState<string>("הכול");
@@ -122,10 +129,48 @@ function App() {
   const selectedPlace = useMemo(() => selectedPlaceId ? places.find((place) => place.id === selectedPlaceId) ?? null : null, [places, selectedPlaceId]);
   const modalPlace = useMemo(() => modalPlaceId ? places.find((place) => place.id === modalPlaceId) ?? null : null, [modalPlaceId, places]);
   const activeView = selectedPlaceId ? null : getViewFromPathname(location.pathname);
+  // ── sync localStorage (fast cache) ──────────────────────────────────────
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.places, JSON.stringify(places)); }, [places]);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.saved, JSON.stringify(savedIds)); }, [savedIds]);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.hotel, JSON.stringify(hotel)); }, [hotel]);
-  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.plans, JSON.stringify(dayPlans)); }, [dayPlans]);
+  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.plans, JSON.stringify(dayPlans)); }, [dayPlans]);  // ── track whether initial DB load has completed ───────────────────────────
+  const dbInitDone = useRef(false);
+  useEffect(() => {
+    if (dbReady && !dbInitDone.current) { dbInitDone.current = true; }
+  }, [dbReady]);
+  // ── sync saved ids to DB after every mutation ────────────────────────────
+  useEffect(() => {
+    if (!dbInitDone.current) return;
+    apiFetch("/saved", { method: "PUT", body: JSON.stringify(savedIds) }).catch(() => {});
+  }, [savedIds]);
+  // ── sync hotel to DB after every mutation ────────────────────────────────
+  useEffect(() => {
+    if (!dbInitDone.current) return;
+    apiFetch("/hotel", { method: "PUT", body: JSON.stringify(hotel) }).catch(() => {});
+  }, [hotel]);
+  // ── sync day plans to DB after every mutation ────────────────────────────
+  useEffect(() => {
+    if (!dbInitDone.current) return;
+    apiFetch("/plans", { method: "PUT", body: JSON.stringify(dayPlans) }).catch(() => {});
+  }, [dayPlans]);  // ── load from DB on mount ─────────────────────────────────────────────────
+  useEffect(() => {
+    apiFetch("/health").then(async () => {
+      const [dbPlaces, dbSaved, dbHotel, dbPlans] = await Promise.all([
+        apiFetch("/places"),
+        apiFetch("/saved"),
+        apiFetch("/hotel"),
+        apiFetch("/plans"),
+      ]);
+      if (Array.isArray(dbPlaces) && dbPlaces.length > 0) setPlaces(dbPlaces as Place[]);
+      if (Array.isArray(dbSaved)) setSavedIds(dbSaved as string[]);
+      if (dbHotel) setHotel(dbHotel as Hotel);
+      if (Array.isArray(dbPlans) && dbPlans.length > 0) setDayPlans(dbPlans as DayPlan[]);
+      setDbReady(true);
+    }).catch(() => {
+      // API not available — continue with localStorage only
+      setDbReady(false);
+    });
+  }, []);
   useEffect(() => { const legacyPath = getLegacyPathFromHash(location.hash); if (legacyPath && legacyPath !== location.pathname) { navigate(legacyPath, { replace: true }); return; } const isKnownPath = getViewFromPathname(location.pathname) || selectedPlaceId; if (!isKnownPath) navigate("/", { replace: true }); }, [location.hash, location.pathname, navigate, selectedPlaceId]);
   useEffect(() => {
     if (!modalPlaceId) return;
@@ -322,6 +367,7 @@ function App() {
     const existingPlace = editingPlaceId ? places.find((place) => place.id === editingPlaceId) : undefined;
     const nextPlace: Place = { id: existingPlace?.id || buildPlaceId(name), name, shortDescription: placeDraft.shortDescription.trim() || "נוסף ידנית", address, openingHours: placeDraft.openingHours.trim(), type: placeDraft.type, area: placeDraft.area.trim(), rating: existingPlace?.rating, tips: placeDraft.tips.split(",").map((item) => item.trim()).filter(Boolean), imageUrl: placeDraft.imageUrl.trim() || existingPlace?.imageUrl || defaultPlaceImage, sourceUrl: placeDraft.sourceUrl.trim() || undefined, instagramUrl: placeDraft.instagramUrl.trim() || undefined, station: placeDraft.station.trim() || undefined, lat, lng, websiteUrl: placeDraft.websiteUrl.trim() || existingPlace?.websiteUrl || undefined, phoneNumber: placeDraft.phoneNumber.trim() || existingPlace?.phoneNumber || undefined, googleMapsUrl: placeDraft.googleMapsUrl.trim() || existingPlace?.googleMapsUrl || undefined, googlePlaceId: placeDraft.googlePlaceId.trim() || existingPlace?.googlePlaceId || undefined, businessStatus: placeDraft.businessStatus.trim() || existingPlace?.businessStatus || undefined };
     setPlaces((current) => editingPlaceId ? current.map((place) => place.id === editingPlaceId ? nextPlace : place) : [nextPlace, ...current]);
+    apiFetch("/places", { method: "POST", body: JSON.stringify(nextPlace) }).catch(() => {});
     setPlaceFormState({ tone: "success", message: editingPlaceId ? "השינויים נשמרו." : "המקום נוסף לרשימה." });
     setLinkImportState({ tone: "idle", message: "" });
     if (editingPlaceId) { setPlaceDraft(placeToDraft(nextPlace)); setImportUrl(nextPlace.sourceUrl || nextPlace.instagramUrl || ""); navigate(getPlacePath(nextPlace.id)); }
@@ -452,7 +498,7 @@ function App() {
               <button type="button" className={`add-dialog-tab${addPlaceMode === "link" ? " active" : ""}`} onClick={() => setAddPlaceMode("link")}>🔗 הדבק לינק</button>
               <button type="button" className={`add-dialog-tab${addPlaceMode === "manual" ? " active" : ""}`} onClick={() => setAddPlaceMode("manual")}>✏️ ידנית</button>
             </div>
-            <div className="add-dialog-body">
+            <div className={`add-dialog-body${addPlaceMode === "manual" ? " scrollable" : ""}`}>
               <form onSubmit={handlePlaceSubmit}>
                 <div style={{ display: addPlaceMode === "search" ? "flex" : "none" }} className="add-dialog-section">
                   <p className="add-dialog-hint">הקלד שם מקום ובחר מהרשימה — הפרטים יתמלאו אוטומטית</p>
