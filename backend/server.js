@@ -24,6 +24,10 @@ const { query, initSchema, pool } = require('./db');
 const PgSession = connectPg(session);
 const app = express();
 
+// Trust the first proxy (nginx) so req.secure reflects HTTPS correctly.
+// Without this, express-session won't set secure cookies when behind nginx.
+app.set('trust proxy', 1);
+
 // ── CORS ─────────────────────────────────────────────────────────────────────
 const allowedOrigins = [
   'http://localhost:4173',
