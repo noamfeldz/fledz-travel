@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 const API = "/api";
 async function apiFetch(path: string, options?: RequestInit) {
@@ -97,6 +97,7 @@ function renderMessageContent(content: string, meta?: ChatMessage["meta"]) {
 
 export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Props) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { sessionId: paramSessionId, slug = "" } = useParams<{ sessionId?: string; slug?: string }>();
   const [searchParams] = useSearchParams();
 
@@ -514,7 +515,7 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
             <button
               type="button"
               className="chat-header-btn"
-              onClick={() => navigate("/planner")}
+              onClick={() => navigate(location.pathname.replace(/\/chat.*$/, "/planner"))}
               title="חזרה לתכנון"
             >
               ✕
@@ -565,7 +566,7 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
                     className="chat-apply-plan-btn"
                     onClick={() => {
                       onApplyPlan(msg.meta!.planData as unknown as AiPlanResult);
-                      navigate("/planner");
+                      navigate(location.pathname.replace(/\/chat.*$/, "/planner"));
                     }}
                   >
                     ✅ החל תוכנית ועבור לתכנון
