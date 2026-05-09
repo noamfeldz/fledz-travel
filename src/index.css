@@ -541,8 +541,6 @@ input:focus, select:focus, textarea:focus {
   justify-content: space-between;
   color: var(--color-text-muted);
   font-size: 0.875rem;
-  padding-bottom: 1.25rem;
-  border-bottom: 1px solid var(--color-border);
 }
 
 .card-actions {
@@ -712,6 +710,12 @@ input:focus, select:focus, textarea:focus {
   border: 1px solid var(--color-border);
   color: var(--color-text-muted);
 }
+
+.chip--attraction { background-color: #fff3e0; color: #c45f00; }
+.chip--museum     { background-color: #f0ecff; color: #6c3dd9; }
+.chip--park       { background-color: #e4f7e9; color: #2a7a43; }
+.chip--food       { background-color: #fff0f0; color: #c0392b; }
+.chip--kids       { background-color: #e0f4ff; color: #1a6fa0; }
 
 /* Place Detail View */
 .place-detail-hero {

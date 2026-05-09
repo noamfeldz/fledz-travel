@@ -154,7 +154,9 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, sessions]);
 
-  const createSession = async (title = "שיחה חדשה") => {
+  // Creates a session in the DB and updates local state — does NOT navigate.
+  // Use this when you need a session ID before an async operation completes.
+  const createSessionSilent = async (title = "שיחה חדשה"): Promise<ChatSession> => {
     const session: ChatSession = await apiFetch("/chat/sessions", {
       method: "POST",
       body: JSON.stringify({ title }),
@@ -162,6 +164,12 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
     setSessions((prev) => [session, ...prev]);
     setActiveSessionId(session.id);
     setMessages([]);
+    return session;
+  };
+
+  // Creates a session and immediately navigates to its URL.
+  const createSession = async (title = "שיחה חדשה") => {
+    const session = await createSessionSilent(title);
     navigate(`/${slug}/chat/${session.id}`, { replace: true });
     return session;
   };
@@ -207,18 +215,20 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
     setEditingTitle(null);
   };
 
-  const ensureActiveSession = async (): Promise<string> => {
-    if (activeSessionId) return activeSessionId;
-    const session = await createSession();
-    return session.id;
-  };
-
   const sendMessage = async (messageText?: string) => {
     const msg = (messageText ?? input).trim();
     if (!msg || loading) return;
     setInput("");
 
-    const sessionId = await ensureActiveSession();
+    // If no session yet, create one silently so the component doesn't remount
+    // mid-send (navigate happens after the response is persisted).
+    let sessionId = activeSessionId;
+    let isNewSession = false;
+    if (!sessionId) {
+      const session = await createSessionSilent();
+      sessionId = session.id;
+      isNewSession = true;
+    }
 
     const optimisticUserMsg: ChatMessage = {
       id: `tmp-${Date.now()}`,
@@ -254,6 +264,12 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
 
       // Update sessions list (title may have been auto-updated)
       await loadSessions();
+
+      // Navigate to the session URL after messages are persisted in DB,
+      // so if the component remounts it can load them correctly.
+      if (isNewSession) {
+        navigate(`/${slug}/chat/${sessionId}`, { replace: true });
+      }
     } catch (e) {
       const errMsg: ChatMessage = {
         id: `tmp-${Date.now()}-err`,
@@ -263,6 +279,10 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errMsg]);
+      // Still navigate so the session is bookmarkable
+      if (isNewSession) {
+        navigate(`/${slug}/chat/${sessionId}`, { replace: true });
+      }
     } finally {
       setLoading(false);
     }
@@ -272,7 +292,13 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
     if (planLoading) return;
     setPlanLoading(true);
 
-    const sessionId = await ensureActiveSession();
+    let sessionId = activeSessionId;
+    let isNewSession = false;
+    if (!sessionId) {
+      const session = await createSessionSilent("תכנון AI אוטומטי");
+      sessionId = session.id;
+      isNewSession = true;
+    }
 
     const triggerUserMsg: ChatMessage = {
       id: `tmp-plan-u-${Date.now()}`,
@@ -335,6 +361,7 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
       });
 
       await loadSessions();
+      if (isNewSession) navigate(`/${slug}/chat/${sessionId}`, { replace: true });
     } catch (e) {
       const errMsg: ChatMessage = {
         id: `tmp-plan-err-${Date.now()}`,
@@ -346,6 +373,7 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
       setMessages((prev) =>
         prev.filter((m) => m.id !== "tmp-plan-loading").concat(errMsg)
       );
+      if (isNewSession) navigate(`/${slug}/chat/${sessionId}`, { replace: true });
     } finally {
       setPlanLoading(false);
     }

@@ -1073,13 +1073,31 @@ app.post('/api/ai/plan', async (req, res) => res.status(400).json({ error: 'use 
 app.post('/api/ai/chat', requireAuth, async (req, res) => {
   try {
     const genAI = getGeminiClient();
-    const { message, history, places, hotel, dayPlans, tripConfig, flights, visitedIds } = req.body;
+    const { message, history, sessionId, places, hotel, dayPlans, tripConfig, flights, visitedIds } = req.body;
     const systemContext = buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visitedIds });
     const systemPrompt = ['אתה עוזר טיולים חכם ואישי. יש לך גישה לכל המידע על הטיול.', 'ענה תמיד בעברית. היה קצר, ברור ומועיל. אפשר להשתמש ב-emoji.', '', systemContext].join('\n');
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const chat = model.startChat({ history: [{ role: 'user', parts: [{ text: systemPrompt }] }, { role: 'model', parts: [{ text: 'הבנתי! אני כאן לעזור עם תכנון הטיול 🗺️' }] }, ...(history || []).map((msg) => ({ role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }] }))] });
     const result = await chat.sendMessage(message);
-    res.json({ reply: result.response.text() });
+    const reply = result.response.text();
+
+    // Persist both messages to DB so history survives refreshes / session switching
+    if (sessionId) {
+      await query(
+        `INSERT INTO chat_messages (id, session_id, role, content) VALUES ($1,$2,'user',$3)`,
+        [uuidv4(), sessionId, message]
+      );
+      await query(
+        `INSERT INTO chat_messages (id, session_id, role, content) VALUES ($1,$2,'assistant',$3)`,
+        [uuidv4(), sessionId, reply]
+      );
+      await query(
+        `UPDATE chat_sessions SET updated_at = now() WHERE id = $1`,
+        [sessionId]
+      );
+    }
+
+    res.json({ reply });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
