@@ -2933,6 +2933,26 @@ input:focus, select:focus, textarea:focus {
   font-family: var(--font-body);
 }
 .chat-apply-plan-btn:hover { filter: brightness(0.92); }
+.chat-apply-plan-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.chat-intent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.chat-intent-btn {
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.chat-intent-btn:hover { filter: brightness(0.92); }
 
 /* Typing indicator */
 .chat-typing-indicator {

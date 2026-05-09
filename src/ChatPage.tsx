@@ -25,7 +25,7 @@ export type ChatMessage = {
   session_id: string;
   role: "user" | "assistant";
   content: string;
-  meta?: { planData?: Record<string, unknown> } | null;
+  meta?: { planData?: Record<string, unknown>; planPreview?: boolean; intentAction?: IntentAction } | null;
   created_at: string;
 };
 
@@ -45,9 +45,15 @@ export type AiPlanResult = {
   summary: string;
 };
 
+export type IntentAction = {
+  intent: 'info' | 'replan' | 'add_place' | 'set_time' | 'mark_visited' | 'edit_place' | 'reschedule';
+  params?: Record<string, unknown>;
+};
+
 type Props = {
   tripContext: TripContext;
   onApplyPlan?: (plan: AiPlanResult) => void;
+  onAction?: (intent: string, params: Record<string, unknown>) => void;
   triggerPlan?: boolean;
 };
 
@@ -95,7 +101,7 @@ function renderMessageContent(content: string, meta?: ChatMessage["meta"]) {
   );
 }
 
-export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Props) {
+export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPlan }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
   const { sessionId: paramSessionId, slug = "" } = useParams<{ sessionId?: string; slug?: string }>();
@@ -252,13 +258,19 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
           sessionId,
           ...tripContext,
         }),
-      }) as { reply: string };
+      }) as { reply: string; intent?: string; params?: Record<string, unknown> };
+
+      const intentAction: IntentAction | undefined =
+        result.intent && result.intent !== 'info'
+          ? { intent: result.intent as IntentAction['intent'], params: result.params ?? {} }
+          : undefined;
 
       const assistantMsg: ChatMessage = {
         id: `tmp-${Date.now()}-a`,
         session_id: sessionId,
         role: "assistant",
         content: result.reply,
+        meta: intentAction ? { intentAction } : undefined,
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
@@ -286,6 +298,83 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleShowPlanPreview = async () => {
+    if (planLoading) return;
+
+    const flights = (tripContext.flights as Array<Record<string, unknown>>) || [];
+    const places = (tripContext.places as Array<Record<string, unknown>>) || [];
+    const dayPlans = (tripContext.dayPlans as Array<Record<string, unknown>>) || [];
+
+    const flightLines = flights.map((f) => {
+      const type = f.type === 'arrival' ? '🛬 נחיתה' : '🛫 המראה';
+      const date = String(f.flightDate || '');
+      const time = f.flightTime ? ` בשעה ${f.flightTime}` : '';
+      const airport = f.airport ? ` — ${f.airport}` : '';
+      return `${type}: ${date}${time}${airport}`;
+    });
+
+    const pinnedLines: string[] = [];
+    for (const day of dayPlans) {
+      const pinned = (day.pinnedPlaceIds as string[]) || [];
+      const times = (day.pinnedTimes as Record<string, string>) || {};
+      for (const placeId of pinned) {
+        const place = places.find((p) => p.id === placeId);
+        const placeName = String(place?.name || placeId);
+        const t = times[placeId] ? ` בשעה ${times[placeId]}` : '';
+        pinnedLines.push(`📌 ${placeName}${t} — ${day.title || ''}`);
+      }
+    }
+
+    const highPriority = places
+      .filter((p) => ((p.priority as number) ?? 3) <= 2)
+      .sort((a, b) => ((a.priority as number) ?? 3) - ((b.priority as number) ?? 3))
+      .map((p) => `⭐ ${p.name} (${p.type || 'אטרקציה'})`);
+
+    const content = [
+      '## 📋 מה ה-AI יודע לפני שמתחיל לתכנן',
+      '',
+      `### ✈️ טיסות (${flights.length})`,
+      ...(flightLines.length ? flightLines : ['לא הוזנו טיסות']),
+      '',
+      `### 📌 מקומות מעוגנים (${pinnedLines.length})`,
+      ...(pinnedLines.length ? pinnedLines : ['אין עיגונים מוגדרים']),
+      '',
+      `### ⭐ עדיפות גבוהה (${highPriority.length})`,
+      ...(highPriority.length ? highPriority : ['אין מקומות בעדיפות גבוהה']),
+      '',
+      '_האם להתחיל תכנון מחדש על בסיס האילוצים האלה?_',
+    ].join('\n');
+
+    let sessionId = activeSessionId;
+    let isNewSession = false;
+    if (!sessionId) {
+      const session = await createSessionSilent('תכנון AI');
+      sessionId = session.id;
+      isNewSession = true;
+    }
+
+    const userMsg: ChatMessage = {
+      id: `tmp-preview-u-${Date.now()}`,
+      session_id: sessionId,
+      role: 'user',
+      content: '🤖 הצג לי את האילוצים לפני תכנון',
+      created_at: new Date().toISOString(),
+    };
+    const previewMsg: ChatMessage = {
+      id: `tmp-preview-a-${Date.now()}`,
+      session_id: sessionId,
+      role: 'assistant',
+      content,
+      meta: { planPreview: true },
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, userMsg, previewMsg]);
+
+    if (isNewSession) {
+      navigate(`/${slug}/chat/${sessionId}`, { replace: true });
     }
   };
 
@@ -506,7 +595,7 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
             <button
               type="button"
               className="chat-header-btn plan-btn"
-              onClick={handleTriggerPlan}
+              onClick={handleShowPlanPreview}
               disabled={planLoading}
               title="בנה תוכנית AI"
             >
@@ -571,6 +660,55 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
                   >
                     ✅ החל תוכנית ועבור לתכנון
                   </button>
+                )}
+                {msg.meta?.planPreview && (
+                  <button
+                    type="button"
+                    className="chat-apply-plan-btn"
+                    onClick={handleTriggerPlan}
+                    disabled={planLoading}
+                  >
+                    {planLoading ? '⏳ מחשב תוכנית...' : '🚀 כן, התחל תכנון!'}
+                  </button>
+                )}
+                {msg.meta?.intentAction && msg.meta.intentAction.intent !== 'info' && (
+                  <div className="chat-intent-actions">
+                    {msg.meta.intentAction.intent === 'replan' && (
+                      <button type="button" className="chat-apply-plan-btn" onClick={handleTriggerPlan} disabled={planLoading}>
+                        {planLoading ? '⏳ מחשב...' : '🔄 תכנן מחדש'}
+                      </button>
+                    )}
+                    {msg.meta.intentAction.intent === 'reschedule' && (
+                      <>
+                        <button type="button" className="chat-intent-btn" onClick={() => onAction?.('reschedule', msg.meta!.intentAction!.params ?? {})}>
+                          ✈️ עדכן טיסה
+                        </button>
+                        <button type="button" className="chat-apply-plan-btn" onClick={handleTriggerPlan} disabled={planLoading}>
+                          {planLoading ? '⏳ מחשב...' : '🔄 תכנן מחדש'}
+                        </button>
+                      </>
+                    )}
+                    {msg.meta.intentAction.intent === 'mark_visited' && (
+                      <button type="button" className="chat-intent-btn" onClick={() => onAction?.('mark_visited', msg.meta!.intentAction!.params ?? {})}>
+                        ✅ סמן כביקור
+                      </button>
+                    )}
+                    {msg.meta.intentAction.intent === 'add_place' && (
+                      <button type="button" className="chat-intent-btn" onClick={() => onAction?.('add_place', msg.meta!.intentAction!.params ?? {})}>
+                        ➕ הוסף מקום
+                      </button>
+                    )}
+                    {msg.meta.intentAction.intent === 'set_time' && (
+                      <button type="button" className="chat-intent-btn" onClick={() => onAction?.('set_time', msg.meta!.intentAction!.params ?? {})}>
+                        📌 עגן זמן
+                      </button>
+                    )}
+                    {msg.meta.intentAction.intent === 'edit_place' && (
+                      <button type="button" className="chat-intent-btn" onClick={() => onAction?.('edit_place', msg.meta!.intentAction!.params ?? {})}>
+                        ✏️ ערוך מקום
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

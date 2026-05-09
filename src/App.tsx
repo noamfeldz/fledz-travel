@@ -841,6 +841,52 @@ function App() {
     }));
     setAiPlanResult(null);
   };
+
+  const handleChatAction = (intent: string, params: Record<string, unknown>) => {
+    switch (intent) {
+      case 'mark_visited': {
+        const name = (params.placeName as string ?? '').toLowerCase();
+        const found = places.find((p) => p.name.toLowerCase().includes(name));
+        if (found) toggleVisited(found.id);
+        break;
+      }
+      case 'add_place':
+        startAddingPlace();
+        break;
+      case 'edit_place': {
+        const name = (params.placeName as string ?? '').toLowerCase();
+        const field = params.field as string;
+        const value = params.value;
+        // Fields the AI is allowed to update directly
+        const ALLOWED_FIELDS: (keyof Place)[] = [
+          'openingHours', 'visitDurationMinutes', 'entryCost',
+          'shortDescription', 'area', 'station', 'tips',
+        ];
+        const found = places.find((p) => p.name.toLowerCase().includes(name));
+        if (found && field && ALLOWED_FIELDS.includes(field as keyof Place) && value !== undefined) {
+          const parsedValue =
+            field === 'visitDurationMinutes' || field === 'entryCost'
+              ? Number(value)
+              : field === 'tips'
+              ? (typeof value === 'string' ? value.split(',').map((s) => s.trim()) : value)
+              : value;
+          const updated = { ...found, [field]: parsedValue } as Place;
+          setPlaces((current) => current.map((p) => p.id === found.id ? updated : p));
+          apiFetch(`${apiBase}/places/${found.id}`, { method: 'PUT', body: JSON.stringify(updated) }).catch(() => {});
+        } else {
+          // Can't auto-apply — navigate to planner so user can edit manually
+          navigate(viewPaths.planner);
+        }
+        break;
+      }
+      case 'set_time':
+        navigate(viewPaths.planner);
+        break;
+      case 'reschedule':
+        navigate(viewPaths.settings);
+        break;
+    }
+  };
   const sendChatMessage = async () => {
     const msg = chatInput.trim();
     if (!msg || aiChatLoading) return;
@@ -1091,8 +1137,8 @@ function App() {
         </nav>
         <div className="chat-page-wrapper">
           <Routes>
-            <Route path="/chat/:sessionId" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} />} />
-            <Route path="/chat" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} triggerPlan={location.search.includes("trigger=plan")} />} />
+            <Route path="/chat/:sessionId" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} onAction={handleChatAction} />} />
+            <Route path="/chat" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} onAction={handleChatAction} triggerPlan={location.search.includes("trigger=plan")} />} />
           </Routes>
         </div>
       </div>

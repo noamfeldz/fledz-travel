@@ -506,6 +506,53 @@ function defaultDurationByType(type) {
   }
 }
 
+function buildChatSystemPrompt(systemContext) {
+  return [
+    'אתה עוזר טיולים חכם ואישי. יש לך גישה לכל המידע על הטיול.',
+    'ענה תמיד בעברית. היה קצר, ברור ומועיל. אפשר להשתמש ב-emoji.',
+    '',
+    'חשוב: ענה תמיד ב-JSON בלבד, ללא markdown wrappers, בפורמט הזה בדיוק:',
+    '{"reply":"<תשובה עברית>","intent":"<intent>","params":{}}',
+    '',
+    'intent אפשרי (בחר אחד):',
+    '"info" — שאלה/תשובה רגילה, אין שינוי נדרש',
+    '"replan" — שינוי/אילוץ חדש שמצריך חישוב מחדש של התוכנית',
+    '"add_place" — בקשה להוסיף מקום חדש לרשימה',
+    '"set_time" — עיגון מקום בשעה/יום ספציפי',
+    '"mark_visited" — דיווח שביקרו במקום',
+    '"edit_place" — שינוי פרטי מקום (שעות, משך ביקור וכו\')',
+    '"reschedule" — שינוי בטיסה/מלון שמשפיע על התוכנית',
+    '',
+    'params לפי intent:',
+    'replan: {"reason":"סיבת השינוי"}',
+    'add_place: {"name":"שם המקום","type":"סוג","area":"אזור","visitDurationMins":90}',
+    'set_time: {"placeName":"שם","time":"HH:MM","dayTitle":"יום X"}',
+    'mark_visited: {"placeName":"שם"}',
+    'edit_place: {"placeName":"שם","field":"openingHours","value":"ערך חדש"}',
+    '  שדות אפשריים: openingHours, visitDurationMinutes (מספר), entryCost (מספר), shortDescription, area, station, tips (טקסט מופרד בפסיקים)',
+    'reschedule: {"detail":"פרטי השינוי"}',
+    '',
+    systemContext,
+  ].join('\n');
+}
+
+function parseAiResponse(rawText) {
+  try {
+    // Strip potential markdown code fences
+    const stripped = rawText.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
+    const match = stripped.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      return {
+        reply: typeof parsed.reply === 'string' ? parsed.reply : rawText,
+        intent: typeof parsed.intent === 'string' ? parsed.intent : 'info',
+        params: (typeof parsed.params === 'object' && parsed.params !== null) ? parsed.params : {},
+      };
+    }
+  } catch (_) {}
+  return { reply: rawText, intent: 'info', params: {} };
+}
+
 function buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visitedIds }) {
   const visitedSet = new Set(visitedIds || []);
   const destination = tripConfig?.destination || 'יעד לא הוגדר';
@@ -1053,25 +1100,21 @@ app.post('/api/trips/:tripId/ai/chat', requireAuth, async (req, res) => {
     const genAI = getGeminiClient();
     const { message, history, places, hotel, dayPlans, tripConfig, flights, visitedIds } = req.body;
     const systemContext = buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visitedIds });
-    const systemPrompt = [
-      'אתה עוזר טיולים חכם ואישי. יש לך גישה לכל המידע על הטיול.',
-      'ענה תמיד בעברית. היה קצר, ברור ומועיל. אפשר להשתמש ב-emoji.',
-      '',
-      systemContext,
-    ].join('\n');
+    const systemPrompt = buildChatSystemPrompt(systemContext);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const chat = model.startChat({
       history: [
         { role: 'user', parts: [{ text: systemPrompt }] },
-        { role: 'model', parts: [{ text: 'הבנתי! אני כאן לעזור עם תכנון הטיול 🗺️' }] },
+        { role: 'model', parts: [{ text: '{"reply":"הבנתי! אני כאן לעזור עם תכנון הטיול 🗺️","intent":"info","params":{}}' }] },
         ...(history || []).map((msg) => ({
           role: msg.role === 'user' ? 'user' : 'model',
           parts: [{ text: msg.content }],
         })),
       ],
     });
-    const result = await chat.sendMessage(message);
-    res.json({ reply: result.response.text() });
+    const rawText = (await chat.sendMessage(message)).response.text();
+    const { reply, intent, params } = parseAiResponse(rawText);
+    res.json({ reply, intent, params });
   } catch (e) {
     console.error('AI chat error:', e.message);
     res.status(500).json({ error: e.message });
@@ -1085,21 +1128,21 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
     const genAI = getGeminiClient();
     const { message, history, sessionId, places, hotel, dayPlans, tripConfig, flights, visitedIds } = req.body;
     const systemContext = buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visitedIds });
-    const systemPrompt = ['אתה עוזר טיולים חכם ואישי. יש לך גישה לכל המידע על הטיול.', 'ענה תמיד בעברית. היה קצר, ברור ומועיל. אפשר להשתמש ב-emoji.', '', systemContext].join('\n');
+    const systemPrompt = buildChatSystemPrompt(systemContext);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const chat = model.startChat({ history: [{ role: 'user', parts: [{ text: systemPrompt }] }, { role: 'model', parts: [{ text: 'הבנתי! אני כאן לעזור עם תכנון הטיול 🗺️' }] }, ...(history || []).map((msg) => ({ role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }] }))] });
-    const result = await chat.sendMessage(message);
-    const reply = result.response.text();
+    const chat = model.startChat({ history: [{ role: 'user', parts: [{ text: systemPrompt }] }, { role: 'model', parts: [{ text: '{"reply":"הבנתי! אני כאן לעזור עם תכנון הטיול 🗺️","intent":"info","params":{}}' }] }, ...(history || []).map((msg) => ({ role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }] }))] });
+    const rawText = (await chat.sendMessage(message)).response.text();
+    const { reply, intent, params } = parseAiResponse(rawText);
 
-    // Persist both messages to DB so history survives refreshes / session switching
+    // Persist both messages to DB
     if (sessionId) {
       await query(
         `INSERT INTO chat_messages (id, session_id, role, content) VALUES ($1,$2,'user',$3)`,
         [uuidv4(), sessionId, message]
       );
       await query(
-        `INSERT INTO chat_messages (id, session_id, role, content) VALUES ($1,$2,'assistant',$3)`,
-        [uuidv4(), sessionId, reply]
+        `INSERT INTO chat_messages (id, session_id, role, content, meta) VALUES ($1,$2,'assistant',$3,$4)`,
+        [uuidv4(), sessionId, reply, JSON.stringify({ intent, params })]
       );
       await query(
         `UPDATE chat_sessions SET updated_at = now() WHERE id = $1`,
@@ -1107,7 +1150,7 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
       );
     }
 
-    res.json({ reply });
+    res.json({ reply, intent, params });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
