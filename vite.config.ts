@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     port: 4173,
     strictPort: false,
+    host: true,
     proxy: {
       '/api': 'http://localhost:3001',
       '/auth': 'http://localhost:3001',
@@ -14,5 +15,9 @@ export default defineConfig({
   preview: {
     port: 4173,
     strictPort: false,
+    proxy: {
+      '/api': 'http://localhost:3001',
+      '/auth': 'http://localhost:3001',
+    },
   },
 });
