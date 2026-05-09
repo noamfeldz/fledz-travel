@@ -16,10 +16,10 @@ export default function LandingPage() {
       <header className="landing-header">
         <div className="landing-header-inner">
           <span className="landing-logo">✈️ פלדז טיולים</span>
-          <a href="/auth/google" className="landing-login-btn">
+          <button className="landing-login-btn" onClick={() => { window.location.href = '/auth/google'; }}>
             <GoogleIcon />
             התחברות עם Google
-          </a>
+          </button>
         </div>
       </header>
 
@@ -29,10 +29,10 @@ export default function LandingPage() {
         <div className="landing-hero-content">
           <h1 className="landing-hero-title">הטיול המושלם<br />מתחיל פה</h1>
           <p className="landing-hero-sub">תכנן, שתף ותאם עם חברים ומשפחה — הכל במקום אחד</p>
-          <a href="/auth/google" className="landing-cta-btn">
+          <button className="landing-cta-btn" onClick={() => { window.location.href = '/auth/google'; }}>
             <GoogleIcon />
             התחל עכשיו — בחינם
-          </a>
+          </button>
         </div>
       </section>
 
@@ -92,10 +92,10 @@ export default function LandingPage() {
       <section className="landing-cta-footer">
         <h2>מוכנים לצאת לדרך? 🚀</h2>
         <p>הצטרפו אלינו ותכננו את הטיול הבא שלכם</p>
-        <a href="/auth/google" className="landing-cta-btn landing-cta-btn-large">
+        <button className="landing-cta-btn landing-cta-btn-large" onClick={() => { window.location.href = '/auth/google'; }}>
           <GoogleIcon />
           התחברות עם Google
-        </a>
+        </button>
       </section>
 
       <footer className="landing-footer">
