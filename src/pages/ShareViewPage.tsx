@@ -85,7 +85,7 @@ export default function ShareViewPage() {
         <div className="share-stats">
           <div className="share-stat"><span className="share-stat-num">{(places as unknown[]).length}</span><span>מקומות</span></div>
           <div className="share-stat"><span className="share-stat-num">{(flights as unknown[]).length}</span><span>טיסות</span></div>
-          {hotel && <div className="share-stat"><span className="share-stat-num">✓</span><span>מלון</span></div>}
+          {!!hotel && <div className="share-stat"><span className="share-stat-num">✓</span><span>מלון</span></div>}
         </div>
 
         <div className="share-section">
