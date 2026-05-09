@@ -16,6 +16,9 @@ export default function LandingPage() {
       <header className="landing-header">
         <div className="landing-header-inner">
           <span className="landing-logo">✈️ פלדז טיולים</span>
+          <span style={{fontSize:'12px',background:'#111',color: loading ? '#facc15' : user ? '#4ade80' : '#f87171',padding:'4px 10px',borderRadius:'6px',fontFamily:'monospace'}}>
+            {loading ? '⏳ loading...' : user ? `✅ logged in: ${user.email ?? user.name}` : '❌ not logged in'}
+          </span>
           <button className="landing-login-btn" onClick={() => { window.location.href = '/auth/google'; }}>
             <GoogleIcon />
             התחברות עם Google

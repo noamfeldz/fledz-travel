@@ -111,7 +111,11 @@ app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/login?error=auth' }),
   (req, res) => {
     const frontend = process.env.FRONTEND_URL || 'http://localhost:5173';
-    res.redirect(`${frontend}/dashboard`);
+    // Wait for session to be persisted before redirecting,
+    // otherwise /auth/me may run before the session is saved to the DB.
+    req.session.save(() => {
+      res.redirect(`${frontend}/dashboard`);
+    });
   }
 );
 
