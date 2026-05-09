@@ -1166,6 +1166,21 @@ input:focus, select:focus, textarea:focus {
   border-bottom: 0;
 }
 
+.day-date-label {
+  margin-inline-start: 0.5rem;
+  font-size: 0.85em;
+  font-weight: 400;
+  color: var(--text-muted, #888);
+  opacity: 0.85;
+}
+
+.settings-end-date-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+  grid-column: 1 / -1;
+}
+
 .place-menu-wrap {
   position: absolute;
   top: 0.75rem;

@@ -1,7 +1,11 @@
 // db.js — PostgreSQL connection pool + schema init
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+// Return DATE columns as plain 'YYYY-MM-DD' strings instead of JS Date objects.
+// JS Date parsing shifts dates by timezone offset (e.g. UTC midnight → previous day in UTC+3).
+types.setTypeParser(1082, (val) => val);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -184,6 +188,8 @@ async function initSchema() {
   await query(`ALTER TABLE flights        ADD COLUMN IF NOT EXISTS trip_id UUID REFERENCES trips(id) ON DELETE CASCADE`);
   await query(`ALTER TABLE hotel          ADD COLUMN IF NOT EXISTS trip_id UUID REFERENCES trips(id) ON DELETE CASCADE`);
   await query(`ALTER TABLE trip_config    ADD COLUMN IF NOT EXISTS trip_id UUID REFERENCES trips(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE trip_config    ADD COLUMN IF NOT EXISTS start_date DATE`);
+  await query(`ALTER TABLE trip_config    ADD COLUMN IF NOT EXISTS num_days INTEGER DEFAULT 7`);
 
   // Drop singleton check constraints so multiple hotels/trip_configs can exist (one per trip)
   await query(`ALTER TABLE hotel       DROP CONSTRAINT IF EXISTS hotel_id_check`);

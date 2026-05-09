@@ -15,7 +15,7 @@ type Place = { id: string; name: string; shortDescription: string; address: stri
 type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; websiteUrl: string; phoneNumber: string; googleMapsUrl: string; googlePlaceId: string; businessStatus: string; priority: string; visitDurationMinutes: string; entryCost: string; };
 type Hotel = { name: string; address: string; lat: number; lng: number; };
 type DayPlan = { id: string; title: string; placeIds: string[]; pinnedPlaceIds: string[]; pinnedTimes?: Record<string, string>; dayEndHour?: number; };
-type TripConfig = { tripName: string; dayStartHour: number; dayEndHour: number; lunchBreakStart: number; lunchBreakEnd: number; destination: string; };
+type TripConfig = { tripName: string; dayStartHour: number; dayEndHour: number; lunchBreakStart: number; lunchBreakEnd: number; destination: string; startDate?: string; numDays?: number; };
 type Flight = { id: string; type: "arrival" | "departure"; flightDate: string; flightTime: string; airport: string; flightNumber?: string; transferMinutes: number; notes: string; };
 type ChatMessage = { role: "user" | "assistant"; content: string; };
 type AiPlanResult = { plan: Record<string, string[]>; excluded: Array<{ placeId: string; reason: string }>; recommendations: string[]; summary: string; };
@@ -34,7 +34,7 @@ async function apiFetch(path: string, options?: RequestInit) {
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const defaultPlaceImage = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80";
 const emptyPlaceDraft: PlaceDraft = { name: "", shortDescription: "", address: "", openingHours: "", type: "אטרקציה", area: "", imageUrl: "", sourceUrl: "", instagramUrl: "", station: "", tips: "", lat: "", lng: "", websiteUrl: "", phoneNumber: "", googleMapsUrl: "", googlePlaceId: "", businessStatus: "", priority: "3", visitDurationMinutes: "", entryCost: "" };
-const defaultTripConfig: TripConfig = { tripName: "הטיול שלנו", dayStartHour: 9, dayEndHour: 21, lunchBreakStart: 13, lunchBreakEnd: 15, destination: "" };
+const defaultTripConfig: TripConfig = { tripName: "הטיול שלנו", dayStartHour: 9, dayEndHour: 21, lunchBreakStart: 13, lunchBreakEnd: 15, destination: "", startDate: "", numDays: 7 };
 const defaultHotel: Hotel = { name: "Park Plaza Victoria London", address: "239 Vauxhall Bridge Road, London SW1V 1EQ", lat: 51.4952, lng: -0.1439 };
 const WEEK_DAY_COUNT = 7;
 function createWeekPlan(index: number): DayPlan {
@@ -471,11 +471,25 @@ function App() {
   const selectedPlace = useMemo(() => selectedPlaceId ? places.find((place) => place.id === selectedPlaceId) ?? null : null, [places, selectedPlaceId]);
   const modalPlace = useMemo(() => modalPlaceId ? places.find((place) => place.id === modalPlaceId) ?? null : null, [modalPlaceId, places]);
   const activeView = selectedPlaceId ? null : getViewFromPathname(location.pathname, tripId);
+  // Reset settings draft to current saved values whenever settings page is opened
+  useEffect(() => { if (activeView === "settings") { setSettingsDraft(tripConfig); setSettingsSaveState("idle"); } }, [activeView]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── sync localStorage (fast cache) ──────────────────────────────────────
   useEffect(() => { window.localStorage.setItem(storageKeys.places, JSON.stringify(places)); }, [places, storageKeys.places]);
   useEffect(() => { window.localStorage.setItem(storageKeys.hotel, JSON.stringify(hotel)); }, [hotel, storageKeys.hotel]);
   useEffect(() => { window.localStorage.setItem(storageKeys.plans, JSON.stringify(dayPlans)); }, [dayPlans, storageKeys.plans]);
   useEffect(() => { window.localStorage.setItem(storageKeys.tripConfig, JSON.stringify(tripConfig)); }, [tripConfig, storageKeys.tripConfig]);
+  // ── resize dayPlans when numDays changes ─────────────────────────────────
+  useEffect(() => {
+    const target = tripConfig.numDays ?? 7;
+    setDayPlans((current) => {
+      if (current.length === target) return current;
+      if (current.length < target) {
+        const extras = Array.from({ length: target - current.length }, (_, i) => createWeekPlan(current.length + i));
+        return [...current, ...extras];
+      }
+      return current.slice(0, target);
+    });
+  }, [tripConfig.numDays]);
   useEffect(() => { window.localStorage.setItem(storageKeys.flights, JSON.stringify(flights)); }, [flights, storageKeys.flights]);
   useEffect(() => { window.localStorage.setItem(storageKeys.visited, JSON.stringify(visitedIds)); }, [visitedIds, storageKeys.visited]);
   // ── track whether initial DB load has completed ───────────────────────────
@@ -1024,12 +1038,19 @@ function App() {
     const isFirstDay = dayIndex === 0;
     const isLastDay = dayIndex === dayPlans.length - 1;
     const dayFlights = flights.filter((f) => (f.type === "arrival" && isFirstDay) || (f.type === "departure" && isLastDay));
+    const dayDateLabel = (() => {
+      if (!tripConfig.startDate) return null;
+      const base = new Date(tripConfig.startDate + "T12:00:00");
+      if (isNaN(base.getTime())) return null;
+      base.setDate(base.getDate() + dayIndex);
+      return base.toLocaleDateString("he-IL", { day: "numeric", month: "numeric" });
+    })();
 
     return (
       <article key={day.id} className="planner-day">
         <div className="day-head">
           <div>
-            <h3>{day.title}</h3>
+            <h3>{day.title}{dayDateLabel && <span className="day-date-label">{dayDateLabel}</span>}</h3>
             <span className={`comfort ${comfort.tone}`}>{comfort.label}</span>
           </div>
           <div className="day-head-actions" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}>
@@ -1086,7 +1107,6 @@ function App() {
             </section>
           )}
           <div className={`planner-image-grid day-drop-zone${dragTarget?.dayId === day.id && !dragTarget.targetPlaceId ? " active" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: null }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, null); }}>
-            <div className="planner-drop-hint">גרור מקום לכאן כדי לשבץ או לשנות סדר</div>
             {day.placeIds.map((placeId, index) => {
               const place = places.find((item) => item.id === placeId);
               if (!place) return null;
@@ -1209,6 +1229,33 @@ function App() {
                     placeholder="למשל: London"
                   />
                 </label>
+                <label>תאריך תחילת הטיול
+                  <input
+                    type="date"
+                    value={settingsDraft.startDate ?? tripConfig.startDate ?? ""}
+                    onFocus={() => setSettingsDraft((c) => c.tripName ? c : tripConfig)}
+                    onChange={(e) => setSettingsDraft((c) => ({ ...c, startDate: e.target.value }))}
+                  />
+                </label>
+                <label>מספר ימים
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    value={settingsDraft.numDays ?? tripConfig.numDays ?? 7}
+                    onFocus={() => setSettingsDraft((c) => c.tripName ? c : tripConfig)}
+                    onChange={(e) => setSettingsDraft((c) => ({ ...c, numDays: Math.max(1, Math.min(60, Number(e.target.value))) }))}
+                  />
+                </label>
+                {(() => {
+                  const sd = settingsDraft.startDate ?? tripConfig.startDate;
+                  const nd = settingsDraft.numDays ?? tripConfig.numDays ?? 7;
+                  if (!sd) return null;
+                  const end = new Date(sd + "T12:00:00");
+                  if (isNaN(end.getTime())) return null;
+                  end.setDate(end.getDate() + nd - 1);
+                  return <p className="settings-end-date-hint">תאריך סיום: {end.toLocaleDateString("he-IL", { day: "numeric", month: "long", year: "numeric" })}</p>;
+                })()}
               </div>
               <div className="settings-subsection-header"><h3>לוח זמנים יומי</h3></div>
               <div className="form-stack settings-grid-2">

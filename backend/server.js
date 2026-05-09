@@ -374,7 +374,7 @@ app.get('/api/share/:token', async (req, res) => {
       visitedIds: visited.rows.map((r) => r.place_id),
       hotel: hotel.rows[0] ? { name: hotel.rows[0].name, address: hotel.rows[0].address, lat: hotel.rows[0].lat, lng: hotel.rows[0].lng } : null,
       dayPlans: plans.rows.map((r) => ({ id: r.id, title: r.title, placeIds: r.place_ids, pinnedPlaceIds: r.pinned_place_ids ?? [], pinnedTimes: r.pinned_times ?? {} })),
-      tripConfig: config.rows[0] ? { tripName: config.rows[0].trip_name, dayStartHour: config.rows[0].day_start_hour, dayEndHour: config.rows[0].day_end_hour, lunchBreakStart: config.rows[0].lunch_break_start, lunchBreakEnd: config.rows[0].lunch_break_end, destination: config.rows[0].destination } : null,
+      tripConfig: config.rows[0] ? { tripName: config.rows[0].trip_name, dayStartHour: config.rows[0].day_start_hour, dayEndHour: config.rows[0].day_end_hour, lunchBreakStart: config.rows[0].lunch_break_start, lunchBreakEnd: config.rows[0].lunch_break_end, destination: config.rows[0].destination, startDate: config.rows[0].start_date ?? '', numDays: config.rows[0].num_days ?? 7 } : null,
       flights: flights.rows.map((r) => ({ id: r.id, type: r.type, flightDate: r.flight_date, flightTime: r.flight_time, airport: r.airport, flightNumber: r.flight_number, transferMinutes: r.transfer_minutes, notes: r.notes })),
     });
   } catch (e) {
@@ -974,20 +974,20 @@ app.put('/api/trips/:tripId/plans', requireAuth, async (req, res) => {
 app.get('/api/trips/:tripId/trip-config', requireAuth, async (req, res) => {
   try {
     const result = await query('SELECT * FROM trip_config WHERE trip_id=$1', [req.params.tripId]);
-    if (!result.rows[0]) return res.json({ tripName: 'הטיול שלנו', dayStartHour: 9, dayEndHour: 21, lunchBreakStart: 13, lunchBreakEnd: 15, destination: '' });
+    if (!result.rows[0]) return res.json({ tripName: 'הטיול שלנו', dayStartHour: 9, dayEndHour: 21, lunchBreakStart: 13, lunchBreakEnd: 15, destination: '', startDate: '', numDays: 7 });
     const r = result.rows[0];
-    res.json({ tripName: r.trip_name, dayStartHour: r.day_start_hour, dayEndHour: r.day_end_hour, lunchBreakStart: r.lunch_break_start, lunchBreakEnd: r.lunch_break_end, destination: r.destination });
+    res.json({ tripName: r.trip_name, dayStartHour: r.day_start_hour, dayEndHour: r.day_end_hour, lunchBreakStart: r.lunch_break_start, lunchBreakEnd: r.lunch_break_end, destination: r.destination, startDate: r.start_date ?? '', numDays: r.num_days ?? 7 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/trips/:tripId/trip-config', requireAuth, async (req, res) => {
   try {
-    const { tripName, dayStartHour, dayEndHour, lunchBreakStart, lunchBreakEnd, destination } = req.body;
+    const { tripName, dayStartHour, dayEndHour, lunchBreakStart, lunchBreakEnd, destination, startDate, numDays } = req.body;
     await query(
-      `INSERT INTO trip_config (trip_id, trip_name, day_start_hour, day_end_hour, lunch_break_start, lunch_break_end, destination)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (trip_id) DO UPDATE SET trip_name=$2, day_start_hour=$3, day_end_hour=$4, lunch_break_start=$5, lunch_break_end=$6, destination=$7`,
-      [req.params.tripId, tripName ?? 'הטיול שלנו', dayStartHour ?? 9, dayEndHour ?? 21, lunchBreakStart ?? 13, lunchBreakEnd ?? 15, destination ?? '']
+      `INSERT INTO trip_config (trip_id, trip_name, day_start_hour, day_end_hour, lunch_break_start, lunch_break_end, destination, start_date, num_days)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (trip_id) DO UPDATE SET trip_name=$2, day_start_hour=$3, day_end_hour=$4, lunch_break_start=$5, lunch_break_end=$6, destination=$7, start_date=$8, num_days=$9`,
+      [req.params.tripId, tripName ?? 'הטיול שלנו', dayStartHour ?? 9, dayEndHour ?? 21, lunchBreakStart ?? 13, lunchBreakEnd ?? 15, destination ?? '', startDate || null, numDays ?? 7]
     );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
