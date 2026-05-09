@@ -840,6 +840,14 @@ input:focus, select:focus, textarea:focus {
   padding: 3rem 0 calc(var(--nav-height) + 1rem);
 }
 
+.modal-dialog {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  padding: 0;
+}
+
 .place-detail-modal-card {
   margin: 0;
 }
@@ -934,6 +942,38 @@ input:focus, select:focus, textarea:focus {
 .planner-day:first-of-type {
   padding-top: 0;
   border-top: 0;
+}
+
+.planner-flight-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+.planner-flight-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.planner-flight-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
+.planner-flight-info strong {
+  font-size: 0.9rem;
+  color: var(--color-text);
+}
+
+.planner-flight-info span {
+  color: var(--color-text-muted);
 }
 
 .planner-day-layout {
@@ -1248,6 +1288,15 @@ input:focus, select:focus, textarea:focus {
 
 .place-context-menu button.danger:hover {
   background: var(--color-error-bg);
+}
+
+.day-context-menu {
+  min-width: 220px;
+}
+
+.context-menu-day-row input[type="number"] {
+  width: 100%;
+  font-size: 0.8rem;
 }
 
 .comfort {

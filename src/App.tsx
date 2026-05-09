@@ -458,6 +458,8 @@ function App() {
   const [dragTarget, setDragTarget] = useState<{ dayId: string; targetPlaceId: string | null } | null>(null);
   const [openPlaceMenu, setOpenPlaceMenu] = useState<string | null>(null);
   useEffect(() => { if (!openPlaceMenu) return; const close = () => setOpenPlaceMenu(null); document.addEventListener("click", close); return () => document.removeEventListener("click", close); }, [openPlaceMenu]);
+  const [openDayMenu, setOpenDayMenu] = useState<string | null>(null);
+  useEffect(() => { if (!openDayMenu) return; const close = () => setOpenDayMenu(null); document.addEventListener("click", close); return () => document.removeEventListener("click", close); }, [openDayMenu]);
   const selectedPlaceId = getPlaceIdFromPathname(location.pathname);
   const selectedPlace = useMemo(() => selectedPlaceId ? places.find((place) => place.id === selectedPlaceId) ?? null : null, [places, selectedPlaceId]);
   const modalPlace = useMemo(() => modalPlaceId ? places.find((place) => place.id === modalPlaceId) ?? null : null, [modalPlaceId, places]);
@@ -965,6 +967,10 @@ function App() {
     const dayPlaces = day.placeIds.map((placeId) => places.find((item) => item.id === placeId)).filter(Boolean) as Place[];
     const dayMapPath = getDayMapPath(day, places, hotel);
     const dayMapCenter = dayPlaces[0] ? [dayPlaces[0].lat, dayPlaces[0].lng] as [number, number] : [hotel.lat, hotel.lng] as [number, number];
+    const dayIndex = dayPlans.indexOf(day);
+    const isFirstDay = dayIndex === 0;
+    const isLastDay = dayIndex === dayPlans.length - 1;
+    const dayFlights = flights.filter((f) => (f.type === "arrival" && isFirstDay) || (f.type === "departure" && isLastDay));
 
     return (
       <article key={day.id} className="planner-day">
@@ -973,42 +979,56 @@ function App() {
             <h3>{day.title}</h3>
             <span className={`comfort ${comfort.tone}`}>{comfort.label}</span>
           </div>
-          <div className="day-end-hour-row" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}>
-            <label className="day-end-hour-label">
-              🌙 עד
-              <input
-                type="number"
-                min={16}
-                max={30}
-                value={day.dayEndHour ?? tripConfig.dayEndHour}
-                className="day-end-hour-input"
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  setDayPlans((current) => current.map((d) => d.id === day.id ? { ...d, dayEndHour: val === tripConfig.dayEndHour ? undefined : val } : d));
-                }}
-              />
-            </label>
-            {day.dayEndHour !== undefined && (
-              <button type="button" className="day-end-hour-reset" title="איפוס לברירת מחדל" onClick={() => setDayPlans((current) => current.map((d) => d.id === day.id ? { ...d, dayEndHour: undefined } : d))}>↺</button>
-            )}
-          </div>
-          <div className="day-head-actions">
-            <select value="" onChange={(event) => addPlaceToDay(day.id, event.target.value)}>
-              <option value="">הוספת מקום ליום</option>
-              {places.map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}
-            </select>
-            <button className="secondary-button" type="button" onClick={() => clearDayPlan(day.id)} disabled={!day.placeIds.length}>ניקוי יום</button>
+          <div className="day-head-actions" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}>
+            <div className="place-menu-wrap">
+              <button className="place-menu-btn" type="button" aria-label="אפשרויות יום" onClick={(e) => { e.stopPropagation(); setOpenDayMenu((prev) => prev === day.id ? null : day.id); }}>⋯</button>
+              {openDayMenu === day.id && (
+                <div className="place-context-menu day-context-menu" onClick={(e) => e.stopPropagation()}>
+                  <div className="context-menu-day-row">
+                    <span>➕ הוספת מקום</span>
+                    <select value="" onChange={(e) => { addPlaceToDay(day.id, e.target.value); setOpenDayMenu(null); }}>
+                      <option value="">בחר מקום...</option>
+                      {places.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="context-menu-day-row">
+                    <span>🌙 שעת סיום</span>
+                    <input
+                      type="number"
+                      min={16}
+                      max={30}
+                      value={day.dayEndHour ?? tripConfig.dayEndHour}
+                      className="day-end-hour-input"
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setDayPlans((current) => current.map((d) => d.id === day.id ? { ...d, dayEndHour: val === tripConfig.dayEndHour ? undefined : val } : d));
+                      }}
+                    />
+                    {day.dayEndHour !== undefined && (
+                      <button type="button" className="day-end-hour-reset" title="איפוס" onClick={() => setDayPlans((current) => current.map((d) => d.id === day.id ? { ...d, dayEndHour: undefined } : d))}>↺</button>
+                    )}
+                  </div>
+                  <button type="button" className="danger" onClick={() => { clearDayPlan(day.id); setOpenDayMenu(null); }} disabled={!day.placeIds.length}>🗑 ניקוי יום</button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
+        {dayFlights.map((f) => (
+          <div key={f.id} className="planner-flight-banner">
+            <span className="planner-flight-icon">{f.type === "arrival" ? "🛬" : "🛫"}</span>
+            <div className="planner-flight-info">
+              <strong>{f.type === "arrival" ? "הגעה" : "יציאה"}{f.flightTime ? ` · ${f.flightTime}` : ""}{f.flightNumber ? ` · ${f.flightNumber}` : ""}</strong>
+              <span>{f.airport}{f.transferMinutes > 0 ? ` · +${f.transferMinutes} דק' העברה` : ""}</span>
+              {f.notes && <span>{f.notes}</span>}
+            </div>
+          </div>
+        ))}
         <div className="planner-day-layout">
           {!!dayPlaces.length && (
             <section className="day-map-panel">
-              <div className="section-head compact">
-                <div>
-                  <h3>מפת היום</h3>
-                  <span>המלון וכל התחנות של היום</span>
-                </div>
-              </div>
+             
               <LazyDayMap day={day} dayPlaces={dayPlaces} dayMapPath={dayMapPath} dayMapCenter={dayMapCenter} hotel={hotel} />
             </section>
           )}
@@ -1023,7 +1043,7 @@ function App() {
                 <article key={place.id} className={`planner-place-card planner-place-card-clickable${isPinned ? " is-pinned" : ""}${isVisited ? " is-visited" : ""}${dragTarget?.dayId === day.id && dragTarget.targetPlaceId === place.id ? " drag-target" : ""}`} draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(day.id, place.id)} onDragEnd={handlePlaceDragEnd} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: place.id }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, place.id); }} role="button" tabIndex={0}>
                   <div className="place-menu-wrap">
                     <button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); const key = `${day.id}:${place.id}`; setOpenPlaceMenu((prev) => prev === key ? null : key); }} onKeyDown={stopEventPropagation}>⋯</button>
-                    {openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { if (isPinned) { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); } else { setOpenPlaceMenu(null); setPinDialogTime(day.pinnedTimes?.[place.id] || ""); setPinDialog({ dayId: day.id, placeId: place.id, placeName: place.name }); } }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" onClick={() => { toggleVisited(place.id); setOpenPlaceMenu(null); }}>{isVisited ? "↩ בטל ביקור" : "✓ ביקרנו"}</button><div className="context-menu-priority-row"><span>⭐ עדיפות</span><div className="priority-pip-row">{[1,2,3,4,5].map((n) => <button key={n} type="button" className={`priority-pip${(place.priority ?? 3) >= n ? " active" : ""}`} onClick={() => { setPlacePriority(place.id, n); setOpenPlaceMenu(null); }}>{n}</button>)}</div></div><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}
+                    {openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { if (isPinned) { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); } else { setOpenPlaceMenu(null); setPinDialogTime(day.pinnedTimes?.[place.id] || ""); setPinDialog({ dayId: day.id, placeId: place.id, placeName: place.name }); } }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" onClick={() => { toggleVisited(place.id); setOpenPlaceMenu(null); }}>{isVisited ? "↩ בטל ביקור" : "✓ ביקרנו"}</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}
                   </div>
                   {isVisited && <span className="visited-badge">✓ ביקרנו</span>}
                   <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" />
@@ -1108,10 +1128,10 @@ function App() {
       <main className="content-stack">
         {selectedPlaceId && !selectedPlace && <section className="panel"><div className="section-head"><div><h2>המקום לא נמצא</h2><span>יכול להיות שהוא נמחק או שכתובת העמוד לא תקינה.</span></div><button type="button" onClick={() => navigate(viewPaths.home)}>חזרה למקומות</button></div></section>}
         {selectedPlace && <>{renderPlaceDetails(selectedPlace)}{editingPlaceId === selectedPlace.id && renderPlaceForm("עריכת מקום", "כאן אפשר לערוך את כל המידע הרלוונטי של המקום.", "שמירת שינויים", stopEditingPlace)}</>}
-        {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section><section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-priority-row"><span>⭐ עדיפות</span><div className="priority-pip-row">{[1,2,3,4,5].map((n) => <button key={n} type="button" className={`priority-pip${(place.priority ?? 3) >= n ? " active" : ""}`} onClick={() => { setPlacePriority(place.id, n); setOpenPlaceMenu(null); }}>{n}</button>)}</div></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>; })}</section></>}
+        {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section><section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>; })}</section></>}
         {!selectedPlaceId && activeView === "hotel" && <section><div className="section-head"><div><h2>המלון שלך</h2><span>מכאן מחושבים המרחקים וזמני ההגעה</span></div><button type="button" onClick={() => setIsEditingHotel((current) => !current)}>{isEditingHotel ? "סגירת עריכה" : "עריכת מלון"}</button></div><button className="secondary-button" type="button" onClick={applyDefaultHotel} style={{marginBottom: "1rem"}}>שימוש במלון שלנו: Park Plaza Victoria London</button><div className="hotel-status"><strong>{hotel.name}</strong><p>{hotel.address}</p><p>מיקום שמור: {hotel.lat.toFixed(4)}, {hotel.lng.toFixed(4)}</p>{hotelLookupState === "loading" && <p>מחפש את המיקום לפי הכתובת...</p>}{hotelLookupState === "done" && <p>המלון נשמר והמרחקים עודכנו.</p>}{hotelLookupState === "error" && <p>לא הצלחנו למצוא את הכתובת אוטומטית. אפשר לשמור קווי אורך ורוחב ידנית.</p>}</div>{isEditingHotel && <form className="form-layout" style={{marginTop: "1.5rem"}} onSubmit={handleHotelSubmit}><div className="form-stack"><label>שם המלון<input name="name" defaultValue={hotel.name} /></label><label>כתובת<input name="address" defaultValue={hotel.address} /></label><label>קו רוחב<input name="lat" defaultValue={hotel.lat} /></label><label>קו אורך<input name="lng" defaultValue={hotel.lng} /></label></div><div className="inline-actions"><button type="submit">שמירת מלון</button></div></form>}</section>}
         {!selectedPlaceId && activeView === "map" && <section className="map-panel"><div className="section-head"><h2>מפת המקומות</h2><span>מציגה את המלון ואת כל המקומות</span></div><MapContainer center={[hotel.lat, hotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}><Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup></Marker>{places.map((place) => { const trip = estimateTransport(haversineKm(hotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer><div className="map-legend"><div className="legend-row"><span className="legend-chip hotel">Hotel</span><span className="legend-chip place">Places</span></div>{places.map((place) => <div key={place.id} className="saved-item saved-item-clickable compact" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}</div></section>}
-        {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>לו"ז לשבוע</h2><span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר</span></div><div className="planner-toolbar"><span>{activeDaysCount} ימים פעילים</span></div></div>{aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}<div className="planner-summary-grid"><article className="planner-summary-card"><strong>{plannedPlacesCount}</strong><span>מקומות שובצו</span></article><article className="planner-summary-card"><strong>{unplannedPlaces.length}</strong><span>עדיין בלי יום</span></article><article className="planner-summary-card"><strong>{pinnedPlacesCount}</strong><span>מקומות מעוגנים</span></article><article className="planner-summary-card"><strong>{places.length}</strong><span>סה"כ מקומות</span></article></div>{!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}{dayPlans.map(renderPlannerDay)}</section>}
+        {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>לו"ז לשבוע</h2><span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר</span></div><div className="planner-toolbar"><span>{activeDaysCount} ימים פעילים</span></div></div>{aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}<div className="planner-summary-grid"><article className="planner-summary-card"><strong>{plannedPlacesCount}</strong><span>מקומות שובצו</span></article><article className="planner-summary-card"><strong>{unplannedPlaces.length}</strong><span>עדיין בלי יום</span></article><article className="planner-summary-card"><strong>{pinnedPlacesCount}</strong><span>מקומות מעוגנים</span></article><article className="planner-summary-card"><strong>{places.length}</strong><span>סה"כ מקומות</span></article></div>{dayPlans.map(renderPlannerDay)}{!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}</section>}
         {!selectedPlaceId && activeView === "settings" && (
           <section className="settings-page">
             {/* ── Trip info ── */}
@@ -1306,7 +1326,7 @@ function App() {
       {modalPlace && !selectedPlaceId && <div className="modal-backdrop" onClick={closePlaceModal} role="presentation"><div className="modal-shell" onClick={(event) => event.stopPropagation()}>{renderPlaceDetails(modalPlace, { isModal: true, onClose: closePlaceModal })}</div></div>}
       {pinDialog && (
         <div className="modal-backdrop" onClick={() => setPinDialog(null)} role="presentation">
-          <div className="modal-shell" style={{ maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-shell modal-dialog" style={{ maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
             <div className="section-head"><strong>📌 עיגון מקום</strong><button type="button" onClick={() => setPinDialog(null)}>✕</button></div>
             <div className="form-stack" style={{ padding: "1rem" }}>
               <p style={{ margin: 0 }}><strong>{pinDialog.placeName}</strong></p>
@@ -1325,7 +1345,7 @@ function App() {
       )}
       {showTripSettings && (
         <div className="modal-backdrop" onClick={() => setShowTripSettings(false)} role="presentation">
-          <div className="modal-shell trip-settings-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-shell modal-dialog trip-settings-panel" onClick={(e) => e.stopPropagation()}>
             <div className="section-head"><strong>⚙️ הגדרות הטיול</strong><button type="button" onClick={() => setShowTripSettings(false)}>✕</button></div>
             <div className="form-stack" style={{ padding: "1rem" }}>
               <label>שם הטיול<input value={tripConfig.tripName} onChange={(e) => setTripConfig((c) => ({ ...c, tripName: e.target.value }))} /></label>
@@ -1343,7 +1363,7 @@ function App() {
       )}
       {showFlights && (
         <div className="modal-backdrop" onClick={() => setShowFlights(false)} role="presentation">
-          <div className="modal-shell flights-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-shell modal-dialog flights-panel" onClick={(e) => e.stopPropagation()}>
             <div className="section-head"><strong>✈️ טיסות</strong><button type="button" onClick={() => setShowFlights(false)}>✕</button></div>
             <div style={{ padding: "0 1rem" }}>
               {flights.map((f) => (
@@ -1371,7 +1391,7 @@ function App() {
       {/* ── Add flight dialog (from settings) ── */}
       {showAddFlightDialog && (
         <div className="modal-backdrop" onClick={() => setShowAddFlightDialog(false)} role="presentation">
-          <div className="modal-shell settings-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-shell modal-dialog settings-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="settings-dialog-header">
               <strong>✈️ הוספת טיסה</strong>
               <button type="button" onClick={() => setShowAddFlightDialog(false)}>✕</button>
@@ -1398,7 +1418,7 @@ function App() {
       {/* ── Hotel edit dialog (from settings) ── */}
       {showHotelEditDialog && (
         <div className="modal-backdrop" onClick={() => setShowHotelEditDialog(false)} role="presentation">
-          <div className="modal-shell settings-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-shell modal-dialog settings-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="settings-dialog-header">
               <strong>🏨 עריכת מלון</strong>
               <button type="button" onClick={() => setShowHotelEditDialog(false)}>✕</button>
