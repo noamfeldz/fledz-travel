@@ -1,7 +1,7 @@
 {
   "name": "fledz-travel",
   "private": true,
-  "version": "0.0.10",
+  "version": "0.0.11",
   "type": "module",
   "scripts": {
     "predev": "npx kill-port 4173",
