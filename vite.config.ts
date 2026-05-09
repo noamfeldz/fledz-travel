@@ -8,6 +8,7 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       '/api': 'http://localhost:3001',
+      '/auth': 'http://localhost:3001',
     },
   },
   preview: {

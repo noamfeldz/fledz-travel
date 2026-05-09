@@ -13,9 +13,13 @@
   "type": "commonjs",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.6",
     "dotenv": "16.6.1",
-    "express": "^5.2.1",
+    "express": "4.22.1",
+    "express-session": "^1.19.0",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
     "pg": "^8.20.0",
     "uuid": "^14.0.0"
   }

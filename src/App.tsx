@@ -2,12 +2,15 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import "leaflet/dist/leaflet.css";
+import { useAuth } from "./context/AuthContext";
+import ChatPage from "./ChatPage";
+import type { AiPlanResult as ChatAiPlanResult } from "./ChatPage";
 
 type PlaceType = "אטרקציה" | "מוזיאון" | "פארק" | "אוכל" | "ילדים";
 type TransportMode = "הליכה" | "אוטובוס" | "רכבת תחתית" | "שילוב";
-type ViewKey = "home" | "saved" | "hotel" | "map" | "planner";
+type ViewKey = "home" | "saved" | "hotel" | "map" | "planner" | "chat";
 type Place = { id: string; name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; rating?: number; tips: string[]; imageUrl: string; sourceUrl?: string; instagramUrl?: string; station?: string; lat: number; lng: number; websiteUrl?: string; phoneNumber?: string; googleMapsUrl?: string; googlePlaceId?: string; businessStatus?: string; priority?: number; visitDurationMinutes?: number; entryCost?: number; };
 type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; websiteUrl: string; phoneNumber: string; googleMapsUrl: string; googlePlaceId: string; businessStatus: string; priority: string; visitDurationMinutes: string; entryCost: string; };
 type Hotel = { name: string; address: string; lat: number; lng: number; };
@@ -87,12 +90,25 @@ const seededPlaces: Place[] = [
 ];
 const placeTypes: PlaceType[] = ["אטרקציה", "מוזיאון", "פארק", "אוכל", "ילדים"];
 const baseAreas = ["הכול", "South Bank", "Central London", "South Kensington", "Camden"];
-const viewPaths: Record<ViewKey, string> = { home: "/", saved: "/saved", hotel: "/hotel", map: "/map", planner: "/planner" };
-const routeItems = [{ key: "home", label: "מקומות" }, { key: "saved", label: "שמורים" }, { key: "hotel", label: "מלון" }, { key: "map", label: "מפה" }, { key: "planner", label: "ימים" }] as const;
-function getViewFromPathname(pathname: string): ViewKey | null { const normalized = pathname === "/" ? "/" : pathname.replace(/\/+$/, ""); const match = (Object.entries(viewPaths) as Array<[ViewKey, string]>).find(([, path]) => path === normalized); return match?.[0] ?? null; }
-function getLegacyPathFromHash(hash: string) { const key = hash.replace(/^#/, "") as ViewKey; return viewPaths[key] ?? null; }
-function getPlaceIdFromPathname(pathname: string) { return decodeURIComponent(pathname.replace(/\/+$/, "").match(/^\/places\/([^/]+)$/)?.[1] ?? ""); }
-function getPlacePath(placeId: string) { return `/places/${encodeURIComponent(placeId)}`; }
+function makeTripPaths(slug: string): Record<ViewKey, string> {
+  const base = slug ? `/${slug}` : "";
+  return { home: `${base}/places`, saved: `${base}/saved`, hotel: `${base}/hotel`, map: `${base}/map`, planner: `${base}/planner`, chat: `${base}/chat` };
+}
+const routeItems = [{ key: "home", label: "מקומות" }, { key: "saved", label: "שמורים" }, { key: "hotel", label: "מלון" }, { key: "map", label: "מפה" }, { key: "planner", label: "ימים" }, { key: "chat", label: "AI" }] as const;
+function getViewFromPathname(pathname: string, tripId: string): ViewKey | null {
+  const vp = makeTripPaths(tripId);
+  // legacy paths (for old sessions without tripId)
+  const legacyMap: Record<string, ViewKey> = { "/": "home", "/saved": "saved", "/hotel": "hotel", "/map": "map", "/planner": "planner", "/chat": "chat" };
+  const normalized = pathname === "/" ? "/" : pathname.replace(/\/+$/, "");
+  if (normalized.startsWith(vp.chat)) return "chat";
+  if (normalized.startsWith("/chat")) return "chat";
+  const tripMatch = (Object.entries(vp) as [ViewKey, string][]).find(([, path]) => path === normalized);
+  if (tripMatch) return tripMatch[0];
+  return legacyMap[normalized] ?? null;
+}
+function getLegacyPathFromHash(hash: string, tripId: string) { const key = hash.replace(/^#/, "") as ViewKey; const vp = makeTripPaths(tripId); return vp[key] ?? null; }
+function getPlaceIdFromPathname(pathname: string) { return decodeURIComponent(pathname.replace(/\/+$/, "").match(/(?:\/places\/|\/place\/)([^/]+)$/)?.[1] ?? ""); }
+function getPlacePath(placeId: string, slug: string) { return slug ? `/${slug}/places/${encodeURIComponent(placeId)}` : `/places/${encodeURIComponent(placeId)}`; }
 function createMarkerIcon(color: string) { const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 41"><path fill="${color}" stroke="#ffffff" stroke-width="2" d="M12.5 1C6.6 1 2 5.6 2 11.5c0 8.9 10.5 28.5 10.5 28.5S23 20.4 23 11.5C23 5.6 18.4 1 12.5 1z"/><circle cx="12.5" cy="11.5" r="4.5" fill="#ffffff"/></svg>`; return new L.Icon({ iconUrl: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`, shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png", iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41] }); }
 const markerIcon = createMarkerIcon("#2b6cb0"); const hotelMarkerIcon = createMarkerIcon("#d97706");
 function readLocalStorage<T>(key: string, fallback: T): T { const stored = window.localStorage.getItem(key); if (!stored) return fallback; try { return JSON.parse(stored) as T; } catch { return fallback; } }
@@ -328,6 +344,7 @@ const getIconForRoute = (key: string, isActive: boolean) => {
     case "hotel": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M10 22v-6.57"/><path d="M12 11h.01"/><path d="M12 7h.01"/><path d="M14 15.43V22"/><path d="M15 16a5 5 0 0 0-6 0"/><path d="M16 11h.01"/><path d="M16 7h.01"/><path d="M8 11h.01"/><path d="M8 7h.01"/><rect x="4" y="2" width="16" height="20" rx="2"/></svg>;
     case "map": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>;
     case "planner": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
+    case "chat": return <svg width="24" height="24" viewBox="0 0 24 24" fill={isActive ? "currentColor" : "none"} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>;
     default: return null;
   }
 };
@@ -335,6 +352,43 @@ const getIconForRoute = (key: string, isActive: boolean) => {
 function App() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { slug = "" } = useParams<{ slug: string }>();
+  const tripId = slug; // used as the API path segment (server resolves slug → UUID)
+  const { user, logout } = useAuth();
+  const viewPaths = makeTripPaths(tripId);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareLinks, setShareLinks] = useState<{ viewer?: string; editor?: string }>({});
+  const [shareLoading, setShareLoading] = useState(false);
+
+  const storageKeys = useMemo(() => ({
+    places: tripId ? `fledz-${tripId}-places` : STORAGE_KEYS.places,
+    saved: tripId ? `fledz-${tripId}-saved` : STORAGE_KEYS.saved,
+    hotel: tripId ? `fledz-${tripId}-hotel` : STORAGE_KEYS.hotel,
+    plans: tripId ? `fledz-${tripId}-plans` : STORAGE_KEYS.plans,
+    tripConfig: tripId ? `fledz-${tripId}-trip-config` : STORAGE_KEYS.tripConfig,
+    flights: tripId ? `fledz-${tripId}-flights` : STORAGE_KEYS.flights,
+    visited: tripId ? `fledz-${tripId}-visited` : STORAGE_KEYS.visited,
+  }), [tripId]);
+
+  const apiBase = tripId ? `/trips/${tripId}` : "";
+
+  async function openShareModal() {
+    setShowShareModal(true);
+    if (shareLinks.viewer) return; // already generated
+    setShareLoading(true);
+    try {
+      const res = await apiFetch(`${apiBase}/share`, { method: "POST" });
+      const origin = window.location.origin;
+      setShareLinks({
+        viewer: `${origin}/share/${res.viewerToken}`,
+        editor: `${origin}/share/${res.editorToken}`,
+      });
+    } catch {
+      setShareLinks({ viewer: "שגיאה ביצירת קישור" });
+    } finally {
+      setShareLoading(false);
+    }
+  }
   const [places, setPlaces] = useState<Place[]>(() => readLocalStorage(STORAGE_KEYS.places, seededPlaces));
   const [savedIds, setSavedIds] = useState<string[]>(() => readLocalStorage(STORAGE_KEYS.saved, ["london-eye", "hyde-park"]));
   const [hotel, setHotel] = useState<Hotel>(() => readLocalStorage(STORAGE_KEYS.hotel, defaultHotel));
@@ -386,15 +440,16 @@ function App() {
   const selectedPlaceId = getPlaceIdFromPathname(location.pathname);
   const selectedPlace = useMemo(() => selectedPlaceId ? places.find((place) => place.id === selectedPlaceId) ?? null : null, [places, selectedPlaceId]);
   const modalPlace = useMemo(() => modalPlaceId ? places.find((place) => place.id === modalPlaceId) ?? null : null, [modalPlaceId, places]);
-  const activeView = selectedPlaceId ? null : getViewFromPathname(location.pathname);
+  const activeView = selectedPlaceId ? null : getViewFromPathname(location.pathname, tripId);
   // ── sync localStorage (fast cache) ──────────────────────────────────────
-  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.places, JSON.stringify(places)); }, [places]);
-  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.saved, JSON.stringify(savedIds)); }, [savedIds]);
-  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.hotel, JSON.stringify(hotel)); }, [hotel]);
-  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.plans, JSON.stringify(dayPlans)); }, [dayPlans]);
-  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.tripConfig, JSON.stringify(tripConfig)); }, [tripConfig]);
-  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.flights, JSON.stringify(flights)); }, [flights]);
-  useEffect(() => { window.localStorage.setItem(STORAGE_KEYS.visited, JSON.stringify(visitedIds)); }, [visitedIds]);  // ── track whether initial DB load has completed ───────────────────────────
+  useEffect(() => { window.localStorage.setItem(storageKeys.places, JSON.stringify(places)); }, [places, storageKeys.places]);
+  useEffect(() => { window.localStorage.setItem(storageKeys.saved, JSON.stringify(savedIds)); }, [savedIds, storageKeys.saved]);
+  useEffect(() => { window.localStorage.setItem(storageKeys.hotel, JSON.stringify(hotel)); }, [hotel, storageKeys.hotel]);
+  useEffect(() => { window.localStorage.setItem(storageKeys.plans, JSON.stringify(dayPlans)); }, [dayPlans, storageKeys.plans]);
+  useEffect(() => { window.localStorage.setItem(storageKeys.tripConfig, JSON.stringify(tripConfig)); }, [tripConfig, storageKeys.tripConfig]);
+  useEffect(() => { window.localStorage.setItem(storageKeys.flights, JSON.stringify(flights)); }, [flights, storageKeys.flights]);
+  useEffect(() => { window.localStorage.setItem(storageKeys.visited, JSON.stringify(visitedIds)); }, [visitedIds, storageKeys.visited]);
+  // ── track whether initial DB load has completed ───────────────────────────
   const dbInitDone = useRef(false);
   useEffect(() => {
     if (dbReady && !dbInitDone.current) { dbInitDone.current = true; }
@@ -402,38 +457,41 @@ function App() {
   // ── sync saved ids to DB after every mutation ────────────────────────────
   useEffect(() => {
     if (!dbInitDone.current) return;
-    apiFetch("/saved", { method: "PUT", body: JSON.stringify(savedIds) }).catch(() => {});
-  }, [savedIds]);
+    apiFetch(`${apiBase}/saved`, { method: "PUT", body: JSON.stringify(savedIds) }).catch(() => {});
+  }, [savedIds, apiBase]);
   // ── sync hotel to DB after every mutation ────────────────────────────────
   useEffect(() => {
     if (!dbInitDone.current) return;
-    apiFetch("/hotel", { method: "PUT", body: JSON.stringify(hotel) }).catch(() => {});
-  }, [hotel]);
+    apiFetch(`${apiBase}/hotel`, { method: "PUT", body: JSON.stringify(hotel) }).catch(() => {});
+  }, [hotel, apiBase]);
   // ── sync day plans to DB after every mutation ────────────────────────────
   useEffect(() => {
     if (!dbInitDone.current) return;
-    apiFetch("/plans", { method: "PUT", body: JSON.stringify(dayPlans) }).catch(() => {});
-  }, [dayPlans]);
+    apiFetch(`${apiBase}/plans`, { method: "PUT", body: JSON.stringify(dayPlans) }).catch(() => {});
+  }, [dayPlans, apiBase]);
   // ── sync visited to DB ────────────────────────────────────────────────────
   useEffect(() => {
     if (!dbInitDone.current) return;
-    apiFetch("/visited", { method: "PUT", body: JSON.stringify(visitedIds) }).catch(() => {});
-  }, [visitedIds]);
+    apiFetch(`${apiBase}/visited`, { method: "PUT", body: JSON.stringify(visitedIds) }).catch(() => {});
+  }, [visitedIds, apiBase]);
   // ── sync trip config to DB ────────────────────────────────────────────────
   useEffect(() => {
     if (!dbInitDone.current) return;
-    apiFetch("/trip-config", { method: "PUT", body: JSON.stringify(tripConfig) }).catch(() => {});
-  }, [tripConfig]);  // ── load from DB on mount ─────────────────────────────────────────────────
+    apiFetch(`${apiBase}/trip-config`, { method: "PUT", body: JSON.stringify(tripConfig) }).catch(() => {});
+  }, [tripConfig, apiBase]);
+  // ── load from DB on mount ─────────────────────────────────────────────────
   useEffect(() => {
+    if (!tripId) return;
+    dbInitDone.current = false;
     apiFetch("/health").then(async () => {
       const [dbPlaces, dbSaved, dbHotel, dbPlans, dbVisited, dbTripConfig, dbFlights] = await Promise.all([
-        apiFetch("/places"),
-        apiFetch("/saved"),
-        apiFetch("/hotel"),
-        apiFetch("/plans"),
-        apiFetch("/visited"),
-        apiFetch("/trip-config"),
-        apiFetch("/flights"),
+        apiFetch(`${apiBase}/places`),
+        apiFetch(`${apiBase}/saved`),
+        apiFetch(`${apiBase}/hotel`),
+        apiFetch(`${apiBase}/plans`),
+        apiFetch(`${apiBase}/visited`),
+        apiFetch(`${apiBase}/trip-config`),
+        apiFetch(`${apiBase}/flights`),
       ]);
       if (Array.isArray(dbPlaces) && dbPlaces.length > 0) setPlaces(dbPlaces as Place[]);
       if (Array.isArray(dbSaved)) setSavedIds(dbSaved as string[]);
@@ -447,8 +505,8 @@ function App() {
       // API not available — continue with localStorage only
       setDbReady(false);
     });
-  }, []);
-  useEffect(() => { const legacyPath = getLegacyPathFromHash(location.hash); if (legacyPath && legacyPath !== location.pathname) { navigate(legacyPath, { replace: true }); return; } const isKnownPath = getViewFromPathname(location.pathname) || selectedPlaceId; if (!isKnownPath) navigate("/", { replace: true }); }, [location.hash, location.pathname, navigate, selectedPlaceId]);
+  }, [tripId, apiBase]);
+  useEffect(() => { const legacyPath = getLegacyPathFromHash(location.hash, tripId); if (legacyPath && legacyPath !== location.pathname) { navigate(legacyPath, { replace: true }); return; } const isKnownPath = getViewFromPathname(location.pathname, tripId) || selectedPlaceId; if (!isKnownPath) navigate(viewPaths.home, { replace: true }); }, [location.hash, location.pathname, navigate, selectedPlaceId, tripId, viewPaths.home]);
   useEffect(() => {
     if (!modalPlaceId) return;
     if (!places.some((place) => place.id === modalPlaceId)) setModalPlaceId(null);
@@ -613,13 +671,13 @@ function App() {
   const openPlaceModal = (placeId: string) => setModalPlaceId(placeId);
   const openPlacePage = (placeId: string) => {
     closePlaceModal();
-    navigate(getPlacePath(placeId));
+    navigate(getPlacePath(placeId, tripId));
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const closePlaceModal = () => setModalPlaceId(null);
-  const startAddingPlace = () => { resetPlaceEditor(); setIsAddingPlace(true); navigate("/"); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const startAddingPlace = () => { resetPlaceEditor(); setIsAddingPlace(true); navigate(viewPaths.home); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const cancelAddingPlace = () => { resetPlaceEditor(); setIsAddingPlace(false); };
-  const startEditingPlace = (place: Place) => { setModalPlaceId(null); setEditingPlaceId(place.id); setPlaceDraft(placeToDraft(place)); setImportUrl(place.sourceUrl || place.instagramUrl || ""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setIsAddingPlace(false); navigate(getPlacePath(place.id)); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const startEditingPlace = (place: Place) => { setModalPlaceId(null); setEditingPlaceId(place.id); setPlaceDraft(placeToDraft(place)); setImportUrl(place.sourceUrl || place.instagramUrl || ""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setIsAddingPlace(false); navigate(getPlacePath(place.id, tripId)); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const stopEditingPlace = () => resetPlaceEditor();
   async function fetchAndSetImport(url: string) {
     try {
@@ -669,11 +727,11 @@ function App() {
     const existingPlace = editingPlaceId ? places.find((place) => place.id === editingPlaceId) : undefined;
     const nextPlace: Place = { id: existingPlace?.id || buildPlaceId(name), name, shortDescription: placeDraft.shortDescription.trim() || "נוסף ידנית", address, openingHours: placeDraft.openingHours.trim(), type: placeDraft.type, area: placeDraft.area.trim(), rating: existingPlace?.rating, tips: placeDraft.tips.split(",").map((item) => item.trim()).filter(Boolean), imageUrl: placeDraft.imageUrl.trim() || existingPlace?.imageUrl || defaultPlaceImage, sourceUrl: placeDraft.sourceUrl.trim() || undefined, instagramUrl: placeDraft.instagramUrl.trim() || undefined, station: placeDraft.station.trim() || undefined, lat, lng, websiteUrl: placeDraft.websiteUrl.trim() || existingPlace?.websiteUrl || undefined, phoneNumber: placeDraft.phoneNumber.trim() || existingPlace?.phoneNumber || undefined, googleMapsUrl: placeDraft.googleMapsUrl.trim() || existingPlace?.googleMapsUrl || undefined, googlePlaceId: placeDraft.googlePlaceId.trim() || existingPlace?.googlePlaceId || undefined, businessStatus: placeDraft.businessStatus.trim() || existingPlace?.businessStatus || undefined, priority: placeDraft.priority ? Number(placeDraft.priority) : 3, visitDurationMinutes: placeDraft.visitDurationMinutes ? Number(placeDraft.visitDurationMinutes) : undefined, entryCost: placeDraft.entryCost !== "" ? Number(placeDraft.entryCost) : undefined };
     setPlaces((current) => editingPlaceId ? current.map((place) => place.id === editingPlaceId ? nextPlace : place) : [nextPlace, ...current]);
-    apiFetch("/places", { method: "POST", body: JSON.stringify(nextPlace) }).catch(() => {});
+    apiFetch(`${apiBase}/places`, { method: "POST", body: JSON.stringify(nextPlace) }).catch(() => {});
     setPlaceFormState({ tone: "success", message: editingPlaceId ? "השינויים נשמרו." : "המקום נוסף לרשימה." });
     setLinkImportState({ tone: "idle", message: "" });
-    if (editingPlaceId) { setPlaceDraft(placeToDraft(nextPlace)); setImportUrl(nextPlace.sourceUrl || nextPlace.instagramUrl || ""); navigate(getPlacePath(nextPlace.id)); }
-    else { resetPlaceEditor(); setIsAddingPlace(false); navigate(getPlacePath(nextPlace.id)); }
+    if (editingPlaceId) { setPlaceDraft(placeToDraft(nextPlace)); setImportUrl(nextPlace.sourceUrl || nextPlace.instagramUrl || ""); navigate(getPlacePath(nextPlace.id, tripId)); }
+    else { resetPlaceEditor(); setIsAddingPlace(false); navigate(getPlacePath(nextPlace.id, tripId)); }
   }
   const addPlaceToDay = (dayId: string, placeId: string, options?: { pinOnAssign?: boolean }) => {
     if (!placeId) return;
@@ -708,19 +766,19 @@ function App() {
     if (!flightDraft.type || !flightDraft.flightDate || !flightDraft.flightTime) return;
     const newFlight: Flight = { id: `flight-${Date.now()}`, type: flightDraft.type as "arrival" | "departure", flightDate: flightDraft.flightDate!, flightTime: flightDraft.flightTime!, airport: flightDraft.airport || "", flightNumber: flightDraft.flightNumber || undefined, transferMinutes: flightDraft.transferMinutes ?? 45, notes: flightDraft.notes || "" };
     setFlights((current) => [...current, newFlight]);
-    apiFetch("/flights", { method: "POST", body: JSON.stringify(newFlight) }).catch(() => {});
+    apiFetch(`${apiBase}/flights`, { method: "POST", body: JSON.stringify(newFlight) }).catch(() => {});
     setFlightDraft({ type: "arrival", transferMinutes: 45 });
   };
   const removeFlight = (id: string) => {
     setFlights((current) => current.filter((f) => f.id !== id));
-    apiFetch(`/flights/${id}`, { method: "DELETE" }).catch(() => {});
+    apiFetch(`${apiBase}/flights/${id}`, { method: "DELETE" }).catch(() => {});
   };
   const buildAiContext = () => ({ places, hotel, dayPlans, tripConfig, flights, visitedIds });
   const runAiPlan = async () => {
     setAiPlanLoading(true);
     setAiPlanResult(null);
     try {
-      const result = await apiFetch("/ai/plan", { method: "POST", body: JSON.stringify(buildAiContext()) }) as AiPlanResult;
+      const result = await apiFetch(`${apiBase}/ai/plan`, { method: "POST", body: JSON.stringify(buildAiContext()) }) as AiPlanResult;
       setAiPlanResult(result);
     } catch (e) {
       setAiPlanResult({ plan: {}, excluded: [], recommendations: [], summary: `שגיאה: ${e instanceof Error ? e.message : String(e)}` });
@@ -728,7 +786,7 @@ function App() {
       setAiPlanLoading(false);
     }
   };
-  const applyAiPlan = (result: AiPlanResult) => {
+  const applyAiPlan = (result: AiPlanResult | ChatAiPlanResult) => {
     setDayPlans((current) => current.map((day) => {
       const aiPlaceIds = result.plan[day.id];
       if (!aiPlaceIds) return day;
@@ -748,7 +806,7 @@ function App() {
     setAiChatLoading(true);
     try {
       const history = chatMessages.map((m) => ({ role: m.role, content: m.content }));
-      const result = await apiFetch("/ai/chat", { method: "POST", body: JSON.stringify({ message: msg, history, ...buildAiContext() }) }) as { reply: string };
+      const result = await apiFetch(`${apiBase}/ai/chat`, { method: "POST", body: JSON.stringify({ message: msg, history, ...buildAiContext() }) }) as { reply: string };
       setChatMessages((current) => [...current, { role: "assistant", content: result.reply }]);
     } catch (e) {
       setChatMessages((current) => [...current, { role: "assistant", content: `שגיאה: ${e instanceof Error ? e.message : String(e)}` }]);
@@ -800,12 +858,12 @@ function App() {
               <h2>{place.name}</h2>
               <p className="detail-summary">{place.shortDescription || "ללא תיאור"}</p>
             </div>
-            {isModal ? <button className="secondary-button" type="button" onClick={options?.onClose}>סגירה</button> : <button className="secondary-button" type="button" onClick={() => navigate("/")}>חזרה למקומות</button>}
+            {isModal ? <button className="secondary-button" type="button" onClick={options?.onClose}>סגירה</button> : <button className="secondary-button" type="button" onClick={() => navigate(viewPaths.home)}>חזרה למקומות</button>}
           </div>
           <div className="inline-actions">
             <button type="button" onClick={() => toggleSave(place.id)}>{savedIds.includes(place.id) ? "הסרה משמורים" : "שמירת מקום"}</button>
             <button className="secondary-button" type="button" onClick={() => startEditingPlace(place)}>עריכת מקום</button>
-            {isModal && <button className="secondary-button" type="button" onClick={() => { closePlaceModal(); navigate(getPlacePath(place.id)); }}>עמוד מלא</button>}
+            {isModal && <button className="secondary-button" type="button" onClick={() => { closePlaceModal(); navigate(getPlacePath(place.id, tripId)); }}>עמוד מלא</button>}
           </div>
           <dl className="detail-grid">
             <div><dt>כתובת</dt><dd>{place.address}</dd></div>
@@ -951,8 +1009,54 @@ function App() {
       </article>
     );
   };
+  const tripContext = { places, hotel, dayPlans, tripConfig, flights, visitedIds };
+
+  // Chat page renders fullscreen (bypasses main content)
+  if (activeView === "chat") {
+    return (
+      <div className="app-shell">
+        <nav className="bottom-nav" aria-label="ניווט ראשי">
+          <div className="nav-container">
+            {routeItems.map((item) => {
+              const isActive = activeView === item.key;
+              return (
+                <button key={item.key} className={isActive ? "nav-item active" : "nav-item"} onClick={() => navigate(viewPaths[item.key])} type="button">
+                  {getIconForRoute(item.key, isActive)}
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+        <div className="chat-page-wrapper">
+          <Routes>
+            <Route path="/chat/:sessionId" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} />} />
+            <Route path="/chat" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} triggerPlan={location.search.includes("trigger=plan")} />} />
+          </Routes>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="app-shell">
+    <div className="app-shell" dir="rtl">
+      {/* ── Trip top bar ── */}
+      <header className="trip-top-bar">
+        <button className="trip-top-bar-back" onClick={() => navigate("/dashboard")} title="חזרה לטיולים שלי">
+          ← כל הטיולים
+        </button>
+        <span className="trip-top-bar-name">{tripConfig.tripName || "הטיול שלי"}</span>
+        <div className="trip-top-bar-actions">
+          <button className="share-btn" onClick={openShareModal} title="שיתוף טיול">🔗 שתף</button>
+          {user && (
+            <button className="trip-user-btn" onClick={() => navigate("/dashboard")} title={user.name}>
+              {user.avatarUrl
+                ? <img src={user.avatarUrl} alt={user.name} className="trip-user-avatar" />
+                : <span className="trip-user-initials">{user.name?.[0]}</span>}
+            </button>
+          )}
+        </div>
+      </header>
 
       <nav className="bottom-nav" aria-label="ניווט ראשי">
         <div className="nav-container">
@@ -968,13 +1072,13 @@ function App() {
         </div>
       </nav>
       <main className="content-stack">
-        {selectedPlaceId && !selectedPlace && <section className="panel"><div className="section-head"><div><h2>המקום לא נמצא</h2><span>יכול להיות שהוא נמחק או שכתובת העמוד לא תקינה.</span></div><button type="button" onClick={() => navigate("/")}>חזרה למקומות</button></div></section>}
+        {selectedPlaceId && !selectedPlace && <section className="panel"><div className="section-head"><div><h2>המקום לא נמצא</h2><span>יכול להיות שהוא נמחק או שכתובת העמוד לא תקינה.</span></div><button type="button" onClick={() => navigate(viewPaths.home)}>חזרה למקומות</button></div></section>}
         {selectedPlace && <>{renderPlaceDetails(selectedPlace)}{editingPlaceId === selectedPlace.id && renderPlaceForm("עריכת מקום", "כאן אפשר לערוך את כל המידע הרלוונטי של המקום.", "שמירת שינויים", stopEditingPlace)}</>}
         {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section><section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const isSaved = savedIds.includes(place.id); const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <article key={place.id} className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><span className="chip">{place.type}</span><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div><div className="planner-assignment" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}><label>שיבוץ ליום<select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); return; } addPlaceToDay(nextDayId, place.id); }}><option value="">עדיין לא שובץ</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></label>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div><div className="card-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggleSave(place.id); }}>{isSaved ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={(event) => { event.stopPropagation(); startEditingPlace(place); }}>עריכה</button></div></div></article>; })}</section></>}
         {!selectedPlaceId && activeView === "saved" && <section><div className="section-head"><h2>מקומות שמורים</h2><span>{savedPlaces.length} נשמרו</span></div><div className="saved-list">{savedPlaces.map((place) => { const distanceKm = haversineKm(hotel, place); const travel = estimateTransport(distanceKm); const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <div key={place.id} className="saved-item saved-item-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{travel.mode} | {travel.minutes} דק' | {place.station || "תחנה תתווסף בהמשך"}</p>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div><div className="saved-item-tools" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}><label>שיבוץ<select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); return; } addPlaceToDay(nextDayId, place.id); }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></label><div className="inline-actions"><button className="secondary-button" type="button" onClick={() => openPlacePage(place.id)}>פתיחה</button><button type="button" onClick={() => toggleSave(place.id)}>הסר</button></div></div></div>; })}{!savedPlaces.length && <p>עדיין לא שמרת מקומות. אפשר לחזור למסך המקומות ולבחור.</p>}</div></section>}
         {!selectedPlaceId && activeView === "hotel" && <section><div className="section-head"><div><h2>המלון שלך</h2><span>מכאן מחושבים המרחקים וזמני ההגעה</span></div><button type="button" onClick={() => setIsEditingHotel((current) => !current)}>{isEditingHotel ? "סגירת עריכה" : "עריכת מלון"}</button></div><button className="secondary-button" type="button" onClick={applyDefaultHotel} style={{marginBottom: "1rem"}}>שימוש במלון שלנו: Park Plaza Victoria London</button><div className="hotel-status"><strong>{hotel.name}</strong><p>{hotel.address}</p><p>מיקום שמור: {hotel.lat.toFixed(4)}, {hotel.lng.toFixed(4)}</p>{hotelLookupState === "loading" && <p>מחפש את המיקום לפי הכתובת...</p>}{hotelLookupState === "done" && <p>המלון נשמר והמרחקים עודכנו.</p>}{hotelLookupState === "error" && <p>לא הצלחנו למצוא את הכתובת אוטומטית. אפשר לשמור קווי אורך ורוחב ידנית.</p>}</div>{isEditingHotel && <form className="form-layout" style={{marginTop: "1.5rem"}} onSubmit={handleHotelSubmit}><div className="form-stack"><label>שם המלון<input name="name" defaultValue={hotel.name} /></label><label>כתובת<input name="address" defaultValue={hotel.address} /></label><label>קו רוחב<input name="lat" defaultValue={hotel.lat} /></label><label>קו אורך<input name="lng" defaultValue={hotel.lng} /></label></div><div className="inline-actions"><button type="submit">שמירת מלון</button></div></form>}</section>}
         {!selectedPlaceId && activeView === "map" && <section className="map-panel"><div className="section-head"><h2>מפת המקומות</h2><span>מציגה את המלון ואת כל המקומות</span></div><MapContainer center={[hotel.lat, hotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}><Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup></Marker>{places.map((place) => { const trip = estimateTransport(haversineKm(hotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer><div className="map-legend"><div className="legend-row"><span className="legend-chip hotel">Hotel</span><span className="legend-chip place">Places</span></div>{places.map((place) => <div key={place.id} className="saved-item saved-item-clickable compact" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}</div></section>}
-        {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>לו"ז לשבוע</h2><span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר</span></div><div className="planner-toolbar"><span>{activeDaysCount} ימים פעילים</span><button type="button" onClick={() => setShowTripSettings(true)}>⚙️ הגדרות</button><button type="button" onClick={() => setShowFlights(true)}>✈️ טיסות ({flights.length})</button><button type="button" onClick={autoFillWeek}>חלוקה אוטומטית</button><button type="button" onClick={runAiPlan} disabled={aiPlanLoading}>{aiPlanLoading ? "מחשב..." : "🤖 AI תכנון"}</button><button type="button" onClick={() => setShowAiChat(true)}>💬 צ'אט AI</button></div></div>{aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}<div className="planner-summary-grid"><article className="planner-summary-card"><strong>{plannedPlacesCount}</strong><span>מקומות שובצו</span></article><article className="planner-summary-card"><strong>{unplannedPlaces.length}</strong><span>עדיין בלי יום</span></article><article className="planner-summary-card"><strong>{pinnedPlacesCount}</strong><span>מקומות מעוגנים</span></article><article className="planner-summary-card"><strong>{places.length}</strong><span>סה"כ מקומות</span></article></div>{!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}{dayPlans.map(renderPlannerDay)}</section>}
+        {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>לו"ז לשבוע</h2><span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר</span></div><div className="planner-toolbar"><span>{activeDaysCount} ימים פעילים</span><button type="button" onClick={() => setShowTripSettings(true)}>⚙️ הגדרות</button><button type="button" onClick={() => setShowFlights(true)}>✈️ טיסות ({flights.length})</button><button type="button" onClick={autoFillWeek}>חלוקה אוטומטית</button><button type="button" onClick={() => navigate(`${viewPaths.chat}?trigger=plan`)}>🤖 תכנון AI</button><button type="button" onClick={() => navigate(viewPaths.chat)}>💬 צ'אט</button></div></div>{aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}<div className="planner-summary-grid"><article className="planner-summary-card"><strong>{plannedPlacesCount}</strong><span>מקומות שובצו</span></article><article className="planner-summary-card"><strong>{unplannedPlaces.length}</strong><span>עדיין בלי יום</span></article><article className="planner-summary-card"><strong>{pinnedPlacesCount}</strong><span>מקומות מעוגנים</span></article><article className="planner-summary-card"><strong>{places.length}</strong><span>סה"כ מקומות</span></article></div>{!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}{dayPlans.map(renderPlannerDay)}</section>}
       </main>
       {isAddingPlace && (
         <div className="add-dialog-backdrop" onClick={(e) => { if (e.target === e.currentTarget) cancelAddingPlace(); }} role="presentation">
@@ -1061,36 +1165,6 @@ function App() {
         </div>
       )}
       {modalPlace && !selectedPlaceId && <div className="modal-backdrop" onClick={closePlaceModal} role="presentation"><div className="modal-shell" onClick={(event) => event.stopPropagation()}>{renderPlaceDetails(modalPlace, { isModal: true, onClose: closePlaceModal })}</div></div>}
-      {showAiChat && (
-        <div className="modal-backdrop" onClick={() => setShowAiChat(false)} role="presentation">
-          <div className="ai-chat-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="ai-chat-header">
-              <strong>💬 צ'אט עם ה-AI על הטיול</strong>
-              <button type="button" onClick={() => setShowAiChat(false)}>✕</button>
-            </div>
-            <div className="ai-chat-messages">
-              {!chatMessages.length && <p className="ai-chat-placeholder">שאל/י כל שאלה על הטיול — ה-AI מכיר את כל המקומות, הימים והטיסות שלך.</p>}
-              {chatMessages.map((msg, i) => (
-                <div key={i} className={`ai-chat-msg ai-chat-msg-${msg.role}`}>
-                  <span className="ai-chat-role">{msg.role === "user" ? "אתה" : "AI"}</span>
-                  <p>{msg.content}</p>
-                </div>
-              ))}
-              {aiChatLoading && <div className="ai-chat-msg ai-chat-msg-assistant"><span className="ai-chat-role">AI</span><p>...</p></div>}
-            </div>
-            <div className="ai-chat-input-row">
-              <textarea
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
-                placeholder="שאל/י שאלה על הטיול..."
-                rows={2}
-              />
-              <button type="button" onClick={sendChatMessage} disabled={aiChatLoading || !chatInput.trim()}>שלח</button>
-            </div>
-          </div>
-        </div>
-      )}
       {showTripSettings && (
         <div className="modal-backdrop" onClick={() => setShowTripSettings(false)} role="presentation">
           <div className="modal-shell trip-settings-panel" onClick={(e) => e.stopPropagation()}>
@@ -1133,6 +1207,36 @@ function App() {
                 <div className="inline-actions"><button type="button" onClick={addFlight}>הוסף טיסה</button></div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ── Share modal ── */}
+      {showShareModal && (
+        <div className="modal-overlay" onClick={() => setShowShareModal(false)}>
+          <div className="modal-card share-modal" dir="rtl" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>שיתוף הטיול</h2>
+              <button className="modal-close" onClick={() => setShowShareModal(false)}>✕</button>
+            </div>
+            {shareLoading ? (
+              <p>יוצר קישורים...</p>
+            ) : (
+              <div className="share-links">
+                <div className="share-link-row">
+                  <label>צפייה בלבד</label>
+                  <input readOnly value={shareLinks.viewer || "טוען..."} onClick={(e) => (e.target as HTMLInputElement).select()} />
+                  <button onClick={() => navigator.clipboard.writeText(shareLinks.viewer || "")}>העתק</button>
+                </div>
+                {shareLinks.editor && (
+                  <div className="share-link-row">
+                    <label>עריכה משותפת</label>
+                    <input readOnly value={shareLinks.editor} onClick={(e) => (e.target as HTMLInputElement).select()} />
+                    <button onClick={() => navigator.clipboard.writeText(shareLinks.editor || "")}>העתק</button>
+                  </div>
+                )}
+                <p className="share-hint">מי שיפתח את קישור הצפייה יוכל לראות את הטיול ולהעתיק אותו לחשבון שלו.</p>
+              </div>
+            )}
           </div>
         </div>
       )}
