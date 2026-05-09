@@ -813,7 +813,7 @@ function App() {
     setAiPlanLoading(true);
     setAiPlanResult(null);
     try {
-      const result = await apiFetch(`${apiBase}/ai/plan`, { method: "POST", body: JSON.stringify(buildAiContext()) }) as AiPlanResult;
+      const result = await apiFetch(`/trips/${tripId}/ai/plan`, { method: "POST", body: JSON.stringify(buildAiContext()) }) as AiPlanResult;
       setAiPlanResult(result);
     } catch (e) {
       setAiPlanResult({ plan: {}, excluded: [], recommendations: [], summary: `שגיאה: ${e instanceof Error ? e.message : String(e)}` });

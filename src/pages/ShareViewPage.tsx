@@ -44,9 +44,12 @@ export default function ShareViewPage() {
         method: "POST",
         credentials: "include",
       });
-      if (!res.ok) throw new Error("שגיאה בהעתקת הטיול");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `שגיאה בהעתקת הטיול (${res.status})`);
+      }
       const { tripId } = await res.json();
-      navigate(`/app/trip/${tripId}/places`);
+      navigate(`/${tripId}/places`);
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "שגיאה לא ידועה");
     } finally {

@@ -317,7 +317,7 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
     setMessages((prev) => [...prev, triggerUserMsg, loadingAsstMsg]);
 
     try {
-      const planResult = await apiFetch("/ai/plan", {
+      const planResult = await apiFetch(`/trips/${slug}/ai/plan`, {
         method: "POST",
         body: JSON.stringify(tripContext),
       }) as AiPlanResult;
