@@ -80,14 +80,21 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
       const name     = profile.displayName || '';
       const avatar   = profile.photos?.[0]?.value || null;
 
-      // Atomic upsert by google_id — handles returning users and concurrent requests
+      // Upsert: link real Google ID to existing seed user if same email
+      const existing = await query('SELECT id FROM users WHERE email=$1', [email]);
+      if (existing.rows.length > 0) {
+        await query(
+          'UPDATE users SET google_id=$1, name=$2, avatar_url=$3 WHERE email=$4',
+          [googleId, name, avatar, email]
+        );
+        const updated = await query('SELECT * FROM users WHERE email=$1', [email]);
+        return done(null, updated.rows[0]);
+      }
+
+      // New user
       const result = await query(
         `INSERT INTO users (google_id, email, name, avatar_url)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (google_id) DO UPDATE
-           SET name = EXCLUDED.name,
-               avatar_url = EXCLUDED.avatar_url
-         RETURNING *`,
+         VALUES ($1,$2,$3,$4) RETURNING *`,
         [googleId, email, name, avatar]
       );
       done(null, result.rows[0]);
@@ -118,12 +125,10 @@ app.get('/auth/google/callback',
 app.get('/auth/me', (req, res) => {
   if (req.isAuthenticated() && req.user) {
     return res.json({
-      user: {
-        id:        req.user.id,
-        email:     req.user.email,
-        name:      req.user.name,
-        avatarUrl: req.user.avatar_url,
-      }
+      id:        req.user.id,
+      email:     req.user.email,
+      name:      req.user.name,
+      avatarUrl: req.user.avatar_url,
     });
   }
   // Dev mode: if Google OAuth not configured, return the seed user
@@ -132,20 +137,18 @@ app.get('/auth/me', (req, res) => {
       .then((r) => {
         if (r.rows[0]) {
           return res.json({
-            user: {
-              id:        r.rows[0].id,
-              email:     r.rows[0].email,
-              name:      r.rows[0].name,
-              avatarUrl: r.rows[0].avatar_url,
-            }
+            id:        r.rows[0].id,
+            email:     r.rows[0].email,
+            name:      r.rows[0].name,
+            avatarUrl: r.rows[0].avatar_url,
           });
         }
-        res.json({ user: null });
+        res.status(401).json({ error: 'not authenticated' });
       })
-      .catch(() => res.json({ user: null }));
+      .catch(() => res.status(401).json({ error: 'not authenticated' }));
     return;
   }
-  res.json({ user: null });
+  res.status(401).json({ error: 'not authenticated' });
 });
 
 app.post('/auth/logout', (req, res, next) => {
@@ -1192,8 +1195,8 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 // ── start ─────────────────────────────────────────────────────────────────────
 
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err.message, err.stack);
-  // don't exit — keep server alive for other requests
+  console.error('Uncaught exception:', err.message);
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason);
