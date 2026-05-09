@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 type Trip = {
   id: string;
+  slug?: string;
   name: string;
   destination: string;
   start_date: string | null;
@@ -20,6 +21,16 @@ export default function DashboardPage() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: "", destination: "", start_date: "", end_date: "" });
   const [menuOpen, setMenuOpen] = useState(false);
+  // Trip context menu
+  const [openTripMenu, setOpenTripMenu] = useState<string | null>(null);
+  const tripMenuRef = useRef<HTMLDivElement | null>(null);
+  // Edit trip
+  const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", destination: "", start_date: "", end_date: "" });
+  const [saving, setSaving] = useState(false);
+  // Delete trip
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetch("/api/trips", { credentials: "include" })
@@ -28,6 +39,53 @@ export default function DashboardPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
+
+  // Close trip context menu on outside click
+  useEffect(() => {
+    if (!openTripMenu) return;
+    const handleClick = () => setOpenTripMenu(null);
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, [openTripMenu]);
+
+  function openEditTrip(trip: Trip) {
+    setEditingTrip(trip);
+    setEditForm({ name: trip.name, destination: trip.destination || "", start_date: trip.start_date || "", end_date: trip.end_date || "" });
+    setOpenTripMenu(null);
+  }
+
+  async function saveEditTrip() {
+    if (!editingTrip || !editForm.name.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/trips/${editingTrip.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(editForm),
+      });
+      const updated = await res.json();
+      setTrips((prev) => prev.map((t) => t.id === editingTrip.id ? { ...t, ...updated } : t));
+      setEditingTrip(null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteTrip(id: string) {
+    setDeleting(true);
+    try {
+      await fetch(`/api/trips/${id}`, { method: "DELETE", credentials: "include" });
+      setTrips((prev) => prev.filter((t) => t.id !== id));
+      setConfirmDeleteId(null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function createTrip() {
     if (!form.name.trim()) return;
@@ -101,6 +159,22 @@ export default function DashboardPage() {
                   <button className="trip-card-btn-primary" onClick={() => navigate(`/${trip.slug || trip.id}/places`)}>
                     כנס
                   </button>
+                  <div className="trip-card-menu-wrap" ref={openTripMenu === trip.id ? tripMenuRef : null}>
+                    <button
+                      className="trip-card-menu-btn"
+                      type="button"
+                      aria-label="אפשרויות"
+                      onClick={(e) => { e.stopPropagation(); setOpenTripMenu((prev) => prev === trip.id ? null : trip.id); }}
+                    >
+                      ⋯
+                    </button>
+                    {openTripMenu === trip.id && (
+                      <div className="trip-context-menu" onClick={(e) => e.stopPropagation()}>
+                        <button type="button" onClick={() => openEditTrip(trip)}>✏️ עריכה</button>
+                        <button type="button" className="danger" onClick={() => { setConfirmDeleteId(trip.id); setOpenTripMenu(null); }}>🗑️ מחיקה</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -159,6 +233,65 @@ export default function DashboardPage() {
               <button className="btn-secondary" onClick={() => setShowCreate(false)}>ביטול</button>
               <button className="btn-primary" onClick={createTrip} disabled={creating || !form.name.trim()}>
                 {creating ? "יוצר..." : "צור טיול"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit trip modal ── */}
+      {editingTrip && (
+        <div className="modal-overlay" onClick={() => setEditingTrip(null)}>
+          <div className="modal-card" dir="rtl" onClick={(e) => e.stopPropagation()}>
+            <h2>עריכת טיול</h2>
+            <label>
+              שם הטיול *
+              <input
+                type="text"
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                autoFocus
+              />
+            </label>
+            <label>
+              יעד
+              <input
+                type="text"
+                value={editForm.destination}
+                onChange={(e) => setEditForm({ ...editForm, destination: e.target.value })}
+                placeholder="לונדון, בריטניה"
+              />
+            </label>
+            <div className="modal-row-2">
+              <label>
+                תאריך יציאה
+                <input type="date" value={editForm.start_date} onChange={(e) => setEditForm({ ...editForm, start_date: e.target.value })} />
+              </label>
+              <label>
+                תאריך חזרה
+                <input type="date" value={editForm.end_date} onChange={(e) => setEditForm({ ...editForm, end_date: e.target.value })} />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setEditingTrip(null)}>ביטול</button>
+              <button className="btn-primary" onClick={saveEditTrip} disabled={saving || !editForm.name.trim()}>
+                {saving ? "שומר..." : "שמור שינויים"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete confirmation modal ── */}
+      {confirmDeleteId && (
+        <div className="modal-overlay" onClick={() => setConfirmDeleteId(null)}>
+          <div className="modal-card modal-card-narrow" dir="rtl" onClick={(e) => e.stopPropagation()}>
+            <h2>מחיקת טיול</h2>
+            <p>האם למחוק את הטיול הזה? פעולה זו אינה הפיכה.</p>
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setConfirmDeleteId(null)}>ביטול</button>
+              <button className="btn-danger" onClick={() => deleteTrip(confirmDeleteId)} disabled={deleting}>
+                {deleting ? "מוחק..." : "מחק טיול"}
               </button>
             </div>
           </div>

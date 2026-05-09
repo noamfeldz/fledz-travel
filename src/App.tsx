@@ -10,11 +10,11 @@ import type { AiPlanResult as ChatAiPlanResult } from "./ChatPage";
 
 type PlaceType = "אטרקציה" | "מוזיאון" | "פארק" | "אוכל" | "ילדים";
 type TransportMode = "הליכה" | "אוטובוס" | "רכבת תחתית" | "שילוב";
-type ViewKey = "home" | "saved" | "hotel" | "map" | "planner" | "chat";
+type ViewKey = "home" | "hotel" | "map" | "planner" | "chat" | "settings";
 type Place = { id: string; name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; rating?: number; tips: string[]; imageUrl: string; sourceUrl?: string; instagramUrl?: string; station?: string; lat: number; lng: number; websiteUrl?: string; phoneNumber?: string; googleMapsUrl?: string; googlePlaceId?: string; businessStatus?: string; priority?: number; visitDurationMinutes?: number; entryCost?: number; };
 type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; websiteUrl: string; phoneNumber: string; googleMapsUrl: string; googlePlaceId: string; businessStatus: string; priority: string; visitDurationMinutes: string; entryCost: string; };
 type Hotel = { name: string; address: string; lat: number; lng: number; };
-type DayPlan = { id: string; title: string; placeIds: string[]; pinnedPlaceIds: string[]; dayEndHour?: number; };
+type DayPlan = { id: string; title: string; placeIds: string[]; pinnedPlaceIds: string[]; pinnedTimes?: Record<string, string>; dayEndHour?: number; };
 type TripConfig = { tripName: string; dayStartHour: number; dayEndHour: number; lunchBreakStart: number; lunchBreakEnd: number; destination: string; };
 type Flight = { id: string; type: "arrival" | "departure"; flightDate: string; flightTime: string; airport: string; flightNumber?: string; transferMinutes: number; notes: string; };
 type ChatMessage = { role: "user" | "assistant"; content: string; };
@@ -24,7 +24,7 @@ type GooglePlacePrediction = {
   description: string;
   structured_formatting?: { main_text?: string; secondary_text?: string };
 };
-const STORAGE_KEYS = { places: "fledz-places", saved: "fledz-saved", hotel: "fledz-hotel", plans: "fledz-plans", tripConfig: "fledz-trip-config", flights: "fledz-flights", visited: "fledz-visited" };
+const STORAGE_KEYS = { places: "fledz-places", hotel: "fledz-hotel", plans: "fledz-plans", tripConfig: "fledz-trip-config", flights: "fledz-flights", visited: "fledz-visited" };
 const API = "/api";
 async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(API + path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -52,11 +52,14 @@ function normalizeDayPlans(plans: DayPlan[] | null | undefined): DayPlan[] {
       seenPlaceIds.add(placeId);
       return true;
     });
+    const validPinnedTimes: Record<string, string> = {};
+    Object.entries(currentPlan.pinnedTimes || {}).forEach(([placeId, time]) => { if (uniquePlaceIds.includes(placeId)) validPinnedTimes[placeId] = time; });
     return {
       id: currentPlan.id || basePlan.id,
       title: currentPlan.title?.trim() || basePlan.title,
       placeIds: uniquePlaceIds,
       pinnedPlaceIds: Array.from(new Set((currentPlan.pinnedPlaceIds || []).filter((placeId) => uniquePlaceIds.includes(placeId)))),
+      pinnedTimes: validPinnedTimes,
     };
   });
 
@@ -72,6 +75,7 @@ function normalizeDayPlans(plans: DayPlan[] | null | undefined): DayPlan[] {
         return true;
       }))),
       pinnedPlaceIds: Array.from(new Set((plan.pinnedPlaceIds || []).filter(Boolean))),
+      pinnedTimes: plan.pinnedTimes || {},
     })),
   ).map((plan) => ({
     ...plan,
@@ -92,13 +96,13 @@ const placeTypes: PlaceType[] = ["אטרקציה", "מוזיאון", "פארק",
 const baseAreas = ["הכול", "South Bank", "Central London", "South Kensington", "Camden"];
 function makeTripPaths(slug: string): Record<ViewKey, string> {
   const base = slug ? `/${slug}` : "";
-  return { home: `${base}/places`, saved: `${base}/saved`, hotel: `${base}/hotel`, map: `${base}/map`, planner: `${base}/planner`, chat: `${base}/chat` };
+  return { home: `${base}/places`, hotel: `${base}/hotel`, map: `${base}/map`, planner: `${base}/planner`, chat: `${base}/chat`, settings: `${base}/settings` };
 }
-const routeItems = [{ key: "home", label: "מקומות" }, { key: "saved", label: "שמורים" }, { key: "hotel", label: "מלון" }, { key: "map", label: "מפה" }, { key: "planner", label: "ימים" }, { key: "chat", label: "AI" }] as const;
+const routeItems = [{ key: "home", label: "מקומות" }, { key: "map", label: "מפה" }, { key: "planner", label: "ימים" }, { key: "chat", label: "AI" }, { key: "settings", label: "הגדרות" }] as const;
 function getViewFromPathname(pathname: string, tripId: string): ViewKey | null {
   const vp = makeTripPaths(tripId);
   // legacy paths (for old sessions without tripId)
-  const legacyMap: Record<string, ViewKey> = { "/": "home", "/saved": "saved", "/hotel": "hotel", "/map": "map", "/planner": "planner", "/chat": "chat" };
+  const legacyMap: Record<string, ViewKey> = { "/": "home", "/hotel": "hotel", "/map": "map", "/planner": "planner", "/chat": "chat" };
   const normalized = pathname === "/" ? "/" : pathname.replace(/\/+$/, "");
   if (normalized.startsWith(vp.chat)) return "chat";
   if (normalized.startsWith("/chat")) return "chat";
@@ -340,11 +344,12 @@ const getIconForRoute = (key: string, isActive: boolean) => {
   const color = "currentColor";
   switch(key) {
     case "home": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>;
-    case "saved": return <svg width="24" height="24" viewBox="0 0 24 24" fill={isActive ? "currentColor" : "none"} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>;
+
     case "hotel": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M10 22v-6.57"/><path d="M12 11h.01"/><path d="M12 7h.01"/><path d="M14 15.43V22"/><path d="M15 16a5 5 0 0 0-6 0"/><path d="M16 11h.01"/><path d="M16 7h.01"/><path d="M8 11h.01"/><path d="M8 7h.01"/><rect x="4" y="2" width="16" height="20" rx="2"/></svg>;
     case "map": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>;
     case "planner": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
     case "chat": return <svg width="24" height="24" viewBox="0 0 24 24" fill={isActive ? "currentColor" : "none"} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>;
+    case "settings": return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>;
     default: return null;
   }
 };
@@ -362,7 +367,6 @@ function App() {
 
   const storageKeys = useMemo(() => ({
     places: tripId ? `fledz-${tripId}-places` : STORAGE_KEYS.places,
-    saved: tripId ? `fledz-${tripId}-saved` : STORAGE_KEYS.saved,
     hotel: tripId ? `fledz-${tripId}-hotel` : STORAGE_KEYS.hotel,
     plans: tripId ? `fledz-${tripId}-plans` : STORAGE_KEYS.plans,
     tripConfig: tripId ? `fledz-${tripId}-trip-config` : STORAGE_KEYS.tripConfig,
@@ -390,7 +394,7 @@ function App() {
     }
   }
   const [places, setPlaces] = useState<Place[]>(() => readLocalStorage(STORAGE_KEYS.places, seededPlaces));
-  const [savedIds, setSavedIds] = useState<string[]>(() => readLocalStorage(STORAGE_KEYS.saved, ["london-eye", "hyde-park"]));
+
   const [hotel, setHotel] = useState<Hotel>(() => readLocalStorage(STORAGE_KEYS.hotel, defaultHotel));
   const [dayPlans, setDayPlans] = useState<DayPlan[]>(() => normalizeDayPlans(readLocalStorage(STORAGE_KEYS.plans, defaultPlans)));
   const [tripConfig, setTripConfig] = useState<TripConfig>(() => readLocalStorage(STORAGE_KEYS.tripConfig, defaultTripConfig));
@@ -404,7 +408,13 @@ function App() {
   const [showAiChat, setShowAiChat] = useState(false);
   const [showTripSettings, setShowTripSettings] = useState(false);
   const [showFlights, setShowFlights] = useState(false);
+  const [pinDialog, setPinDialog] = useState<{ dayId: string; placeId: string; placeName: string } | null>(null);
+  const [pinDialogTime, setPinDialogTime] = useState("");
   const [flightDraft, setFlightDraft] = useState<Partial<Flight>>({ type: "arrival", transferMinutes: 45 });
+  const [showAddFlightDialog, setShowAddFlightDialog] = useState(false);
+  const [showHotelEditDialog, setShowHotelEditDialog] = useState(false);
+  const [settingsDraft, setSettingsDraft] = useState<TripConfig>(defaultTripConfig);
+  const [settingsSaveState, setSettingsSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [dbReady, setDbReady] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("הכול");
@@ -443,7 +453,6 @@ function App() {
   const activeView = selectedPlaceId ? null : getViewFromPathname(location.pathname, tripId);
   // ── sync localStorage (fast cache) ──────────────────────────────────────
   useEffect(() => { window.localStorage.setItem(storageKeys.places, JSON.stringify(places)); }, [places, storageKeys.places]);
-  useEffect(() => { window.localStorage.setItem(storageKeys.saved, JSON.stringify(savedIds)); }, [savedIds, storageKeys.saved]);
   useEffect(() => { window.localStorage.setItem(storageKeys.hotel, JSON.stringify(hotel)); }, [hotel, storageKeys.hotel]);
   useEffect(() => { window.localStorage.setItem(storageKeys.plans, JSON.stringify(dayPlans)); }, [dayPlans, storageKeys.plans]);
   useEffect(() => { window.localStorage.setItem(storageKeys.tripConfig, JSON.stringify(tripConfig)); }, [tripConfig, storageKeys.tripConfig]);
@@ -454,11 +463,6 @@ function App() {
   useEffect(() => {
     if (dbReady && !dbInitDone.current) { dbInitDone.current = true; }
   }, [dbReady]);
-  // ── sync saved ids to DB after every mutation ────────────────────────────
-  useEffect(() => {
-    if (!dbInitDone.current) return;
-    apiFetch(`${apiBase}/saved`, { method: "PUT", body: JSON.stringify(savedIds) }).catch(() => {});
-  }, [savedIds, apiBase]);
   // ── sync hotel to DB after every mutation ────────────────────────────────
   useEffect(() => {
     if (!dbInitDone.current) return;
@@ -484,9 +488,8 @@ function App() {
     if (!tripId) return;
     dbInitDone.current = false;
     apiFetch("/health").then(async () => {
-      const [dbPlaces, dbSaved, dbHotel, dbPlans, dbVisited, dbTripConfig, dbFlights] = await Promise.all([
+      const [dbPlaces, dbHotel, dbPlans, dbVisited, dbTripConfig, dbFlights] = await Promise.all([
         apiFetch(`${apiBase}/places`),
-        apiFetch(`${apiBase}/saved`),
         apiFetch(`${apiBase}/hotel`),
         apiFetch(`${apiBase}/plans`),
         apiFetch(`${apiBase}/visited`),
@@ -494,7 +497,6 @@ function App() {
         apiFetch(`${apiBase}/flights`),
       ]);
       if (Array.isArray(dbPlaces) && dbPlaces.length > 0) setPlaces(dbPlaces as Place[]);
-      if (Array.isArray(dbSaved)) setSavedIds(dbSaved as string[]);
       if (dbHotel) setHotel(dbHotel as Hotel);
       if (Array.isArray(dbPlans)) setDayPlans(normalizeDayPlans(dbPlans as DayPlan[]));
       if (Array.isArray(dbVisited)) setVisitedIds(dbVisited as string[]);
@@ -642,7 +644,6 @@ function App() {
       }
     };
   }, [isAddingPlace, editingPlaceId]);
-  const savedPlaces = useMemo(() => places.filter((place) => savedIds.includes(place.id)), [places, savedIds]);
   const filteredPlaces = useMemo(() => places.filter((place) => { const q = query.toLowerCase(); const matchesQuery = !query.trim() || place.name.toLowerCase().includes(q) || place.shortDescription.toLowerCase().includes(q) || place.address.toLowerCase().includes(q); const matchesType = typeFilter === "הכול" || place.type === typeFilter; const matchesArea = areaFilter === "הכול" || place.area === areaFilter; return matchesQuery && matchesType && matchesArea; }), [areaFilter, places, query, typeFilter]);
   const areaOptions = useMemo(() => baseAreas.concat(places.map((place) => place.area).filter(Boolean)).filter((area, index, all) => all.indexOf(area) === index), [places]);
   const assignedDayByPlaceId = useMemo(() => dayPlans.reduce<Record<string, string>>((result, day) => {
@@ -667,7 +668,7 @@ function App() {
   }, {}), [dayPlans, hotel, places, tripConfig]);
   const resetPlaceEditor = () => { setPlaceDraft(emptyPlaceDraft); setEditingPlaceId(null); setImportUrl(""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setAddPlaceMode("search"); setAutocompleteSelected(false); };
   const updatePlaceDraft = <K extends keyof PlaceDraft>(key: K, value: PlaceDraft[K]) => setPlaceDraft((current) => ({ ...current, [key]: value }));
-  const toggleSave = (placeId: string) => setSavedIds((current) => current.includes(placeId) ? current.filter((id) => id !== placeId) : [...current, placeId]);
+
   const openPlaceModal = (placeId: string) => setModalPlaceId(placeId);
   const openPlacePage = (placeId: string) => {
     closePlaceModal();
@@ -711,8 +712,8 @@ function App() {
     const name = String(formData.get("name") || ""); const address = String(formData.get("address") || "");
     const latValue = String(formData.get("lat") || ""); const lngValue = String(formData.get("lng") || "");
     if (!name || !address) return;
-    if (latValue && lngValue) { setHotel({ name, address, lat: Number(latValue), lng: Number(lngValue) }); setHotelLookupState("done"); setIsEditingHotel(false); return; }
-    try { setHotelLookupState("loading"); const coordinates = await geocodeAddress(address); setHotel({ name, address, ...coordinates }); setHotelLookupState("done"); setIsEditingHotel(false); }
+    if (latValue && lngValue) { setHotel({ name, address, lat: Number(latValue), lng: Number(lngValue) }); setHotelLookupState("done"); setIsEditingHotel(false); setShowHotelEditDialog(false); return; }
+    try { setHotelLookupState("loading"); const coordinates = await geocodeAddress(address); setHotel({ name, address, ...coordinates }); setHotelLookupState("done"); setIsEditingHotel(false); setShowHotelEditDialog(false); }
     catch { setHotel({ name, address, lat: hotel.lat, lng: hotel.lng }); setHotelLookupState("error"); }
   }
   async function handlePlaceSubmit(event: FormEvent<HTMLFormElement>) {
@@ -752,13 +753,36 @@ function App() {
     }));
   };
   const movePlace = (dayId: string, index: number, direction: -1 | 1) => setDayPlans((current) => current.map((day) => { if (day.id !== dayId) return day; const nextIndex = index + direction; if (nextIndex < 0 || nextIndex >= day.placeIds.length) return day; const reordered = [...day.placeIds]; [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]]; return { ...day, placeIds: reordered }; }));
-  const removePlaceFromDay = (dayId: string, placeId: string) => setDayPlans((current) => current.map((day) => day.id === dayId ? { ...day, placeIds: day.placeIds.filter((id) => id !== placeId), pinnedPlaceIds: day.pinnedPlaceIds.filter((id) => id !== placeId) } : day));
-  const clearPlaceAssignment = (placeId: string) => setDayPlans((current) => current.map((day) => day.placeIds.includes(placeId) || day.pinnedPlaceIds.includes(placeId) ? { ...day, placeIds: day.placeIds.filter((id) => id !== placeId), pinnedPlaceIds: day.pinnedPlaceIds.filter((id) => id !== placeId) } : day));
+  const removePlaceFromDay = (dayId: string, placeId: string) => setDayPlans((current) => current.map((day) => {
+    if (day.id !== dayId) return day;
+    const newPinnedTimes = { ...(day.pinnedTimes || {}) };
+    delete newPinnedTimes[placeId];
+    return { ...day, placeIds: day.placeIds.filter((id) => id !== placeId), pinnedPlaceIds: day.pinnedPlaceIds.filter((id) => id !== placeId), pinnedTimes: newPinnedTimes };
+  }));
+  const clearPlaceAssignment = (placeId: string) => setDayPlans((current) => current.map((day) => {
+    if (!day.placeIds.includes(placeId) && !day.pinnedPlaceIds.includes(placeId)) return day;
+    const newPinnedTimes = { ...(day.pinnedTimes || {}) };
+    delete newPinnedTimes[placeId];
+    return { ...day, placeIds: day.placeIds.filter((id) => id !== placeId), pinnedPlaceIds: day.pinnedPlaceIds.filter((id) => id !== placeId), pinnedTimes: newPinnedTimes };
+  }));
+  const deletePlace = (placeId: string) => { setPlaces((current) => current.filter((p) => p.id !== placeId)); clearPlaceAssignment(placeId); apiFetch(`${apiBase}/places/${placeId}`, { method: "DELETE" }).catch(() => {}); if (selectedPlaceId === placeId) navigate(viewPaths.home); };
+  const setPlacePriority = (placeId: string, priority: number) => { const place = places.find((p) => p.id === placeId); if (!place) return; const updated = { ...place, priority }; setPlaces((current) => current.map((p) => p.id === placeId ? updated : p)); apiFetch(`${apiBase}/places/${placeId}`, { method: "PUT", body: JSON.stringify(updated) }).catch(() => {}); };
   const clearDayPlan = (dayId: string) => setDayPlans((current) => current.map((day) => day.id === dayId ? { ...day, placeIds: [], pinnedPlaceIds: [] } : day));
   const togglePlacePin = (dayId: string, placeId: string) => setDayPlans((current) => current.map((day) => {
     if (day.id !== dayId || !day.placeIds.includes(placeId)) return day;
     const isPinned = day.pinnedPlaceIds.includes(placeId);
-    return { ...day, pinnedPlaceIds: isPinned ? day.pinnedPlaceIds.filter((id) => id !== placeId) : [...day.pinnedPlaceIds, placeId] };
+    if (isPinned) {
+      const newPinnedTimes = { ...(day.pinnedTimes || {}) };
+      delete newPinnedTimes[placeId];
+      return { ...day, pinnedPlaceIds: day.pinnedPlaceIds.filter((id) => id !== placeId), pinnedTimes: newPinnedTimes };
+    }
+    return { ...day, pinnedPlaceIds: [...day.pinnedPlaceIds, placeId] };
+  }));
+  const setPinWithTime = (dayId: string, placeId: string, time: string) => setDayPlans((current) => current.map((day) => {
+    if (day.id !== dayId || !day.placeIds.includes(placeId)) return day;
+    const newPinnedTimes = { ...(day.pinnedTimes || {}) };
+    if (time) newPinnedTimes[placeId] = time; else delete newPinnedTimes[placeId];
+    return { ...day, pinnedPlaceIds: day.pinnedPlaceIds.includes(placeId) ? day.pinnedPlaceIds : [...day.pinnedPlaceIds, placeId], pinnedTimes: newPinnedTimes };
   }));
   const autoFillWeek = () => setDayPlans((current) => autoDistributeWeek(current, places, hotel, visitedIds, tripConfig));
   const toggleVisited = (placeId: string) => setVisitedIds((current) => current.includes(placeId) ? current.filter((id) => id !== placeId) : [...current, placeId]);
@@ -861,7 +885,6 @@ function App() {
             {isModal ? <button className="secondary-button" type="button" onClick={options?.onClose}>סגירה</button> : <button className="secondary-button" type="button" onClick={() => navigate(viewPaths.home)}>חזרה למקומות</button>}
           </div>
           <div className="inline-actions">
-            <button type="button" onClick={() => toggleSave(place.id)}>{savedIds.includes(place.id) ? "הסרה משמורים" : "שמירת מקום"}</button>
             <button className="secondary-button" type="button" onClick={() => startEditingPlace(place)}>עריכת מקום</button>
             {isModal && <button className="secondary-button" type="button" onClick={() => { closePlaceModal(); navigate(getPlacePath(place.id, tripId)); }}>עמוד מלא</button>}
           </div>
@@ -989,7 +1012,7 @@ function App() {
                 <article key={place.id} className={`planner-place-card planner-place-card-clickable${isPinned ? " is-pinned" : ""}${isVisited ? " is-visited" : ""}${dragTarget?.dayId === day.id && dragTarget.targetPlaceId === place.id ? " drag-target" : ""}`} draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(day.id, place.id)} onDragEnd={handlePlaceDragEnd} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: place.id }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, place.id); }} role="button" tabIndex={0}>
                   <div className="place-menu-wrap">
                     <button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); const key = `${day.id}:${place.id}`; setOpenPlaceMenu((prev) => prev === key ? null : key); }} onKeyDown={stopEventPropagation}>⋯</button>
-                    {openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" onClick={() => { toggleVisited(place.id); setOpenPlaceMenu(null); }}>{isVisited ? "↩ בטל ביקור" : "✓ ביקרנו"}</button><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}
+                    {openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { if (isPinned) { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); } else { setOpenPlaceMenu(null); setPinDialogTime(day.pinnedTimes?.[place.id] || ""); setPinDialog({ dayId: day.id, placeId: place.id, placeName: place.name }); } }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" onClick={() => { toggleVisited(place.id); setOpenPlaceMenu(null); }}>{isVisited ? "↩ בטל ביקור" : "✓ ביקרנו"}</button><div className="context-menu-priority-row"><span>⭐ עדיפות</span><div className="priority-pip-row">{[1,2,3,4,5].map((n) => <button key={n} type="button" className={`priority-pip${(place.priority ?? 3) >= n ? " active" : ""}`} onClick={() => { setPlacePriority(place.id, n); setOpenPlaceMenu(null); }}>{n}</button>)}</div></div><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}
                   </div>
                   {isVisited && <span className="visited-badge">✓ ביקרנו</span>}
                   <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" />
@@ -998,7 +1021,7 @@ function App() {
                       <strong>{index + 1}. {place.name}</strong>
                     </div>
                     <p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p>
-                    {isPinned && <span className="pin-indicator">מעוגן ולא יוזז אוטומטית</span>}
+                    {isPinned && <span className="pin-indicator">📌 מעוגן{day.pinnedTimes?.[place.id] ? ` · ${day.pinnedTimes[place.id]}` : ""}</span>}
                   </div>
                 </article>
               );
@@ -1074,11 +1097,116 @@ function App() {
       <main className="content-stack">
         {selectedPlaceId && !selectedPlace && <section className="panel"><div className="section-head"><div><h2>המקום לא נמצא</h2><span>יכול להיות שהוא נמחק או שכתובת העמוד לא תקינה.</span></div><button type="button" onClick={() => navigate(viewPaths.home)}>חזרה למקומות</button></div></section>}
         {selectedPlace && <>{renderPlaceDetails(selectedPlace)}{editingPlaceId === selectedPlace.id && renderPlaceForm("עריכת מקום", "כאן אפשר לערוך את כל המידע הרלוונטי של המקום.", "שמירת שינויים", stopEditingPlace)}</>}
-        {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section><section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const isSaved = savedIds.includes(place.id); const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <article key={place.id} className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><span className="chip">{place.type}</span><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div><div className="planner-assignment" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}><label>שיבוץ ליום<select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); return; } addPlaceToDay(nextDayId, place.id); }}><option value="">עדיין לא שובץ</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></label>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div><div className="card-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggleSave(place.id); }}>{isSaved ? "הסרה משמורים" : "שמירת מקום"}</button><button className="secondary-button" type="button" onClick={(event) => { event.stopPropagation(); startEditingPlace(place); }}>עריכה</button></div></div></article>; })}</section></>}
-        {!selectedPlaceId && activeView === "saved" && <section><div className="section-head"><h2>מקומות שמורים</h2><span>{savedPlaces.length} נשמרו</span></div><div className="saved-list">{savedPlaces.map((place) => { const distanceKm = haversineKm(hotel, place); const travel = estimateTransport(distanceKm); const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <div key={place.id} className="saved-item saved-item-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{travel.mode} | {travel.minutes} דק' | {place.station || "תחנה תתווסף בהמשך"}</p>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div><div className="saved-item-tools" onClick={stopEventPropagation} onKeyDown={stopEventPropagation}><label>שיבוץ<select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); return; } addPlaceToDay(nextDayId, place.id); }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></label><div className="inline-actions"><button className="secondary-button" type="button" onClick={() => openPlacePage(place.id)}>פתיחה</button><button type="button" onClick={() => toggleSave(place.id)}>הסר</button></div></div></div>; })}{!savedPlaces.length && <p>עדיין לא שמרת מקומות. אפשר לחזור למסך המקומות ולבחור.</p>}</div></section>}
+        {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section><section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><span className="chip">{place.type}</span><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-priority-row"><span>⭐ עדיפות</span><div className="priority-pip-row">{[1,2,3,4,5].map((n) => <button key={n} type="button" className={`priority-pip${(place.priority ?? 3) >= n ? " active" : ""}`} onClick={() => { setPlacePriority(place.id, n); setOpenPlaceMenu(null); }}>{n}</button>)}</div></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>; })}</section></>}
         {!selectedPlaceId && activeView === "hotel" && <section><div className="section-head"><div><h2>המלון שלך</h2><span>מכאן מחושבים המרחקים וזמני ההגעה</span></div><button type="button" onClick={() => setIsEditingHotel((current) => !current)}>{isEditingHotel ? "סגירת עריכה" : "עריכת מלון"}</button></div><button className="secondary-button" type="button" onClick={applyDefaultHotel} style={{marginBottom: "1rem"}}>שימוש במלון שלנו: Park Plaza Victoria London</button><div className="hotel-status"><strong>{hotel.name}</strong><p>{hotel.address}</p><p>מיקום שמור: {hotel.lat.toFixed(4)}, {hotel.lng.toFixed(4)}</p>{hotelLookupState === "loading" && <p>מחפש את המיקום לפי הכתובת...</p>}{hotelLookupState === "done" && <p>המלון נשמר והמרחקים עודכנו.</p>}{hotelLookupState === "error" && <p>לא הצלחנו למצוא את הכתובת אוטומטית. אפשר לשמור קווי אורך ורוחב ידנית.</p>}</div>{isEditingHotel && <form className="form-layout" style={{marginTop: "1.5rem"}} onSubmit={handleHotelSubmit}><div className="form-stack"><label>שם המלון<input name="name" defaultValue={hotel.name} /></label><label>כתובת<input name="address" defaultValue={hotel.address} /></label><label>קו רוחב<input name="lat" defaultValue={hotel.lat} /></label><label>קו אורך<input name="lng" defaultValue={hotel.lng} /></label></div><div className="inline-actions"><button type="submit">שמירת מלון</button></div></form>}</section>}
         {!selectedPlaceId && activeView === "map" && <section className="map-panel"><div className="section-head"><h2>מפת המקומות</h2><span>מציגה את המלון ואת כל המקומות</span></div><MapContainer center={[hotel.lat, hotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}><Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup></Marker>{places.map((place) => { const trip = estimateTransport(haversineKm(hotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer><div className="map-legend"><div className="legend-row"><span className="legend-chip hotel">Hotel</span><span className="legend-chip place">Places</span></div>{places.map((place) => <div key={place.id} className="saved-item saved-item-clickable compact" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}</div></section>}
         {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>לו"ז לשבוע</h2><span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר</span></div><div className="planner-toolbar"><span>{activeDaysCount} ימים פעילים</span><button type="button" onClick={() => setShowTripSettings(true)}>⚙️ הגדרות</button><button type="button" onClick={() => setShowFlights(true)}>✈️ טיסות ({flights.length})</button><button type="button" onClick={autoFillWeek}>חלוקה אוטומטית</button><button type="button" onClick={() => navigate(`${viewPaths.chat}?trigger=plan`)}>🤖 תכנון AI</button><button type="button" onClick={() => navigate(viewPaths.chat)}>💬 צ'אט</button></div></div>{aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}<div className="planner-summary-grid"><article className="planner-summary-card"><strong>{plannedPlacesCount}</strong><span>מקומות שובצו</span></article><article className="planner-summary-card"><strong>{unplannedPlaces.length}</strong><span>עדיין בלי יום</span></article><article className="planner-summary-card"><strong>{pinnedPlacesCount}</strong><span>מקומות מעוגנים</span></article><article className="planner-summary-card"><strong>{places.length}</strong><span>סה"כ מקומות</span></article></div>{!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}{dayPlans.map(renderPlannerDay)}</section>}
+        {!selectedPlaceId && activeView === "settings" && (
+          <section className="settings-page">
+            {/* ── Trip info ── */}
+            <div className="settings-section panel">
+              <div className="settings-section-header">
+                <h2>פרטי הטיול</h2>
+                <span>שם, יעד ושעות היום</span>
+              </div>
+              <div className="form-stack">
+                <label>שם הטיול
+                  <input
+                    value={settingsDraft.tripName ?? tripConfig.tripName}
+                    onFocus={() => setSettingsDraft(tripConfig)}
+                    onChange={(e) => setSettingsDraft((c) => ({ ...c, tripName: e.target.value }))}
+                  />
+                </label>
+                <label>יעד
+                  <input
+                    value={settingsDraft.destination ?? tripConfig.destination}
+                    onFocus={() => setSettingsDraft((c) => c.tripName ? c : tripConfig)}
+                    onChange={(e) => setSettingsDraft((c) => ({ ...c, destination: e.target.value }))}
+                    placeholder="למשל: London"
+                  />
+                </label>
+              </div>
+              <div className="settings-subsection-header"><h3>לוח זמנים יומי</h3></div>
+              <div className="form-stack settings-grid-2">
+                <label>שעת התחלת יום<input type="number" min={0} max={23} value={settingsDraft.dayStartHour ?? tripConfig.dayStartHour} onFocus={() => setSettingsDraft(tripConfig)} onChange={(e) => setSettingsDraft((c) => ({ ...c, dayStartHour: Number(e.target.value) }))} /></label>
+                <label>שעת סיום יום<input type="number" min={0} max={23} value={settingsDraft.dayEndHour ?? tripConfig.dayEndHour} onFocus={() => setSettingsDraft(tripConfig)} onChange={(e) => setSettingsDraft((c) => ({ ...c, dayEndHour: Number(e.target.value) }))} /></label>
+                <label>תחילת הפסקת צהריים<input type="number" min={0} max={23} value={settingsDraft.lunchBreakStart ?? tripConfig.lunchBreakStart} onFocus={() => setSettingsDraft(tripConfig)} onChange={(e) => setSettingsDraft((c) => ({ ...c, lunchBreakStart: Number(e.target.value) }))} /></label>
+                <label>סוף הפסקת צהריים<input type="number" min={0} max={23} value={settingsDraft.lunchBreakEnd ?? tripConfig.lunchBreakEnd} onFocus={() => setSettingsDraft(tripConfig)} onChange={(e) => setSettingsDraft((c) => ({ ...c, lunchBreakEnd: Number(e.target.value) }))} /></label>
+              </div>
+              <div className="settings-save-row">
+                <button
+                  type="button"
+                  className="settings-save-btn"
+                  disabled={settingsSaveState === "saving"}
+                  onClick={async () => {
+                    const next = { ...tripConfig, ...settingsDraft };
+                    setSettingsSaveState("saving");
+                    setTripConfig(next);
+                    try {
+                      await apiFetch(`${apiBase}/trip-config`, { method: "PUT", body: JSON.stringify(next) });
+                      setSettingsSaveState("saved");
+                      setTimeout(() => setSettingsSaveState("idle"), 2000);
+                    } catch { setSettingsSaveState("idle"); }
+                  }}
+                >
+                  {settingsSaveState === "saving" ? "שומר..." : settingsSaveState === "saved" ? "✓ נשמר" : "שמור שינויים"}
+                </button>
+              </div>
+            </div>
+
+            {/* ── Hotel ── */}
+            <div className="settings-section panel">
+              <div className="settings-section-header">
+                <h2>מלון</h2>
+                <span>בסיס לחישוב מרחקים וזמני הגעה</span>
+              </div>
+              <div className="hotel-status">
+                <strong>{hotel.name}</strong>
+                <p>{hotel.address}</p>
+                <p className="hotel-coords">📍 {hotel.lat.toFixed(4)}, {hotel.lng.toFixed(4)}</p>
+              </div>
+              <div className="inline-actions" style={{ marginTop: "0.75rem" }}>
+                <button type="button" onClick={() => setShowHotelEditDialog(true)}>✏️ עריכת מלון</button>
+                <button className="secondary-button" type="button" onClick={applyDefaultHotel}>שחזר ברירת מחדל</button>
+              </div>
+            </div>
+
+            {/* ── Flights ── */}
+            <div className="settings-section panel">
+              <div className="settings-section-header">
+                <h2>טיסות</h2>
+                <span>{flights.length ? `${flights.length} טיסות רשומות` : "עדיין לא הוזנו טיסות"}</span>
+              </div>
+              {!flights.length && <p className="settings-empty">לא הוזנו טיסות עדיין.</p>}
+              {flights.map((f) => (
+                <div key={f.id} className="flight-item">
+                  <span className="flight-icon">{f.type === "arrival" ? "🛬" : "🛫"}</span>
+                  <div className="flight-item-body">
+                    <strong>{f.type === "arrival" ? "הגעה" : "יציאה"}</strong>
+                    <span>{f.flightDate} · {f.flightTime}</span>
+                    <span>{f.airport}{f.flightNumber ? ` · ${f.flightNumber}` : ""}</span>
+                    {f.notes && <span className="flight-notes">{f.notes}</span>}
+                  </div>
+                  <button type="button" className="danger icon-btn" onClick={() => removeFlight(f.id)} aria-label="מחק טיסה">✕</button>
+                </div>
+              ))}
+              <div className="settings-add-row">
+                <button type="button" onClick={() => { setFlightDraft({ type: "arrival", transferMinutes: 45 }); setShowAddFlightDialog(true); }}>+ הוסף טיסה</button>
+              </div>
+            </div>
+
+            {/* ── Share ── */}
+            <div className="settings-section panel">
+              <div className="settings-section-header">
+                <h2>שיתוף</h2>
+                <span>שתף את הטיול עם אחרים</span>
+              </div>
+              <div className="inline-actions">
+                <button type="button" onClick={openShareModal}>🔗 יצירת קישור שיתוף</button>
+              </div>
+            </div>
+          </section>
+        )}
       </main>
       {isAddingPlace && (
         <div className="add-dialog-backdrop" onClick={(e) => { if (e.target === e.currentTarget) cancelAddingPlace(); }} role="presentation">
@@ -1165,6 +1293,25 @@ function App() {
         </div>
       )}
       {modalPlace && !selectedPlaceId && <div className="modal-backdrop" onClick={closePlaceModal} role="presentation"><div className="modal-shell" onClick={(event) => event.stopPropagation()}>{renderPlaceDetails(modalPlace, { isModal: true, onClose: closePlaceModal })}</div></div>}
+      {pinDialog && (
+        <div className="modal-backdrop" onClick={() => setPinDialog(null)} role="presentation">
+          <div className="modal-shell" style={{ maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+            <div className="section-head"><strong>📌 עיגון מקום</strong><button type="button" onClick={() => setPinDialog(null)}>✕</button></div>
+            <div className="form-stack" style={{ padding: "1rem" }}>
+              <p style={{ margin: 0 }}><strong>{pinDialog.placeName}</strong></p>
+              <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "0.5rem 0 0" }}>מקום מעוגן לא יוזז על ידי החלוקה האוטומטית. אם יש שעת הגעה קבועה (למשל מופע), הוסף אותה כדי שה-AI יתכנן את שאר היום בהתאם.</p>
+              <label style={{ marginTop: "0.75rem" }}>
+                שעת הגעה נדרשת (אופציונלי)
+                <input type="time" value={pinDialogTime} onChange={(e) => setPinDialogTime(e.target.value)} />
+              </label>
+              <div className="inline-actions" style={{ marginTop: "0.5rem" }}>
+                <button type="button" onClick={() => { setPinWithTime(pinDialog.dayId, pinDialog.placeId, pinDialogTime); setPinDialog(null); }}>📌 עגן</button>
+                <button type="button" className="secondary-button" onClick={() => setPinDialog(null)}>ביטול</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {showTripSettings && (
         <div className="modal-backdrop" onClick={() => setShowTripSettings(false)} role="presentation">
           <div className="modal-shell trip-settings-panel" onClick={(e) => e.stopPropagation()}>
@@ -1207,6 +1354,58 @@ function App() {
                 <div className="inline-actions"><button type="button" onClick={addFlight}>הוסף טיסה</button></div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ── Add flight dialog (from settings) ── */}
+      {showAddFlightDialog && (
+        <div className="modal-backdrop" onClick={() => setShowAddFlightDialog(false)} role="presentation">
+          <div className="modal-shell settings-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-dialog-header">
+              <strong>✈️ הוספת טיסה</strong>
+              <button type="button" onClick={() => setShowAddFlightDialog(false)}>✕</button>
+            </div>
+            <div className="form-stack settings-dialog-body">
+              <label>סוג<select value={flightDraft.type || "arrival"} onChange={(e) => setFlightDraft((d) => ({ ...d, type: e.target.value as "arrival" | "departure" }))}><option value="arrival">🛬 הגעה</option><option value="departure">🛫 יציאה</option></select></label>
+              <label>תאריך<input type="date" value={flightDraft.flightDate || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightDate: e.target.value }))} /></label>
+              <label>שעה<input type="time" value={flightDraft.flightTime || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightTime: e.target.value }))} /></label>
+              <label>שדה תעופה<input value={flightDraft.airport || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, airport: e.target.value }))} placeholder="למשל: LHR" /></label>
+              <label>מספר טיסה<input value={flightDraft.flightNumber || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightNumber: e.target.value }))} placeholder="למשל: LY315" /></label>
+              <label>זמן העברה (דקות)<input type="number" value={flightDraft.transferMinutes ?? 45} onChange={(e) => setFlightDraft((d) => ({ ...d, transferMinutes: Number(e.target.value) }))} /></label>
+              <label>הערות<input value={flightDraft.notes || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, notes: e.target.value }))} placeholder="אופציונלי" /></label>
+            </div>
+            <div className="settings-dialog-actions">
+              <button className="secondary-button" type="button" onClick={() => setShowAddFlightDialog(false)}>ביטול</button>
+              <button type="button" onClick={() => { addFlight(); setShowAddFlightDialog(false); }}
+                disabled={!flightDraft.type || !flightDraft.flightDate || !flightDraft.flightTime}>
+                הוסף טיסה
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Hotel edit dialog (from settings) ── */}
+      {showHotelEditDialog && (
+        <div className="modal-backdrop" onClick={() => setShowHotelEditDialog(false)} role="presentation">
+          <div className="modal-shell settings-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-dialog-header">
+              <strong>🏨 עריכת מלון</strong>
+              <button type="button" onClick={() => setShowHotelEditDialog(false)}>✕</button>
+            </div>
+            <form onSubmit={handleHotelSubmit}>
+              <div className="form-stack settings-dialog-body">
+                <label>שם המלון<input name="name" defaultValue={hotel.name} required /></label>
+                <label>כתובת<input name="address" defaultValue={hotel.address} required /></label>
+                <label>קו רוחב (אופציונלי)<input name="lat" defaultValue={hotel.lat} /></label>
+                <label>קו אורך (אופציונלי)<input name="lng" defaultValue={hotel.lng} /></label>
+                {hotelLookupState === "loading" && <p>מחפש מיקום לפי כתובת...</p>}
+                {hotelLookupState === "error" && <p className="form-message error">לא נמצא מיקום. הוסף קו רוחב ואורך ידנית.</p>}
+              </div>
+              <div className="settings-dialog-actions">
+                <button className="secondary-button" type="button" onClick={() => setShowHotelEditDialog(false)}>ביטול</button>
+                <button type="submit">שמור מלון</button>
+              </div>
+            </form>
           </div>
         </div>
       )}

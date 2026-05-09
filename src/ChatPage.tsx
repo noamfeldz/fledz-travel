@@ -97,7 +97,7 @@ function renderMessageContent(content: string, meta?: ChatMessage["meta"]) {
 
 export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Props) {
   const navigate = useNavigate();
-  const { sessionId: paramSessionId } = useParams<{ sessionId?: string }>();
+  const { sessionId: paramSessionId, slug = "" } = useParams<{ sessionId?: string; slug?: string }>();
   const [searchParams] = useSearchParams();
 
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -162,7 +162,7 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
     setSessions((prev) => [session, ...prev]);
     setActiveSessionId(session.id);
     setMessages([]);
-    navigate(`/chat/${session.id}`, { replace: true });
+    navigate(`/${slug}/chat/${session.id}`, { replace: true });
     return session;
   };
 
@@ -173,7 +173,7 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
 
   const handleSelectSession = async (id: string) => {
     setActiveSessionId(id);
-    navigate(`/chat/${id}`, { replace: true });
+    navigate(`/${slug}/chat/${id}`, { replace: true });
     setShowSidebar(false);
   };
 
@@ -185,7 +185,7 @@ export default function ChatPage({ tripContext, onApplyPlan, triggerPlan }: Prop
     if (activeSessionId === id) {
       setActiveSessionId(null);
       setMessages([]);
-      navigate("/chat", { replace: true });
+      navigate(`/${slug}/chat`, { replace: true });
     }
   };
 

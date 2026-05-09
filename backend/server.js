@@ -161,10 +161,10 @@ app.post('/auth/logout', (req, res, next) => {
 // ── Auth middleware ────────────────────────────────────────────────────────────
 
 async function requireAuth(req, res, next) {
-  // Dev mode bypass when Google OAuth is not configured
+  // Dev mode bypass when Google OAuth is not configured — use real shiranfeld account
   if (!process.env.GOOGLE_CLIENT_ID) {
     if (!req.user) {
-      const r = await query('SELECT * FROM users WHERE google_id=$1', ['seed-user-shiran']);
+      const r = await query("SELECT * FROM users WHERE email='shiranfeld@gmail.com' AND google_id != 'seed-user-shiran' ORDER BY created_at DESC LIMIT 1");
       req.user = r.rows[0] || null;
     }
     return next();
@@ -206,6 +206,20 @@ async function requireTripAccess(minRole = 'viewer') {
     res.status(403).json({ error: 'insufficient access' });
   };
 }
+
+// ── Auto-resolve tripId slug → UUID for all routes using :tripId ─────────────
+app.param('tripId', async (req, res, next, tripId) => {
+  if (!UUID_RE.test(tripId)) {
+    try {
+      const row = await query('SELECT id FROM trips WHERE slug=$1', [tripId]);
+      if (!row.rows.length) return res.status(404).json({ error: 'trip not found' });
+      req.params.tripId = row.rows[0].id;
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+  next();
+});
 
 // ── Trips CRUD ────────────────────────────────────────────────────────────────
 
@@ -349,7 +363,7 @@ app.get('/api/share/:token', async (req, res) => {
       savedIds: saved.rows.map((r) => r.place_id),
       visitedIds: visited.rows.map((r) => r.place_id),
       hotel: hotel.rows[0] ? { name: hotel.rows[0].name, address: hotel.rows[0].address, lat: hotel.rows[0].lat, lng: hotel.rows[0].lng } : null,
-      dayPlans: plans.rows.map((r) => ({ id: r.id, title: r.title, placeIds: r.place_ids, pinnedPlaceIds: r.pinned_place_ids ?? [] })),
+      dayPlans: plans.rows.map((r) => ({ id: r.id, title: r.title, placeIds: r.place_ids, pinnedPlaceIds: r.pinned_place_ids ?? [], pinnedTimes: r.pinned_times ?? {} })),
       tripConfig: config.rows[0] ? { tripName: config.rows[0].trip_name, dayStartHour: config.rows[0].day_start_hour, dayEndHour: config.rows[0].day_end_hour, lunchBreakStart: config.rows[0].lunch_break_start, lunchBreakEnd: config.rows[0].lunch_break_end, destination: config.rows[0].destination } : null,
       flights: flights.rows.map((r) => ({ id: r.id, type: r.type, flightDate: r.flight_date, flightTime: r.flight_time, airport: r.airport, flightNumber: r.flight_number, transferMinutes: r.transfer_minutes, notes: r.notes })),
     });
@@ -433,9 +447,10 @@ app.post('/api/share/:token/copy', requireAuth, async (req, res) => {
       const p = srcPlans.rows[i];
       const newPlaceIds = (p.place_ids || []).map((id) => placeIdMap[id]).filter(Boolean);
       const newPinnedIds = (p.pinned_place_ids || []).map((id) => placeIdMap[id]).filter(Boolean);
+      const newPinnedTimes = Object.fromEntries(Object.entries(p.pinned_times || {}).map(([id, t]) => [placeIdMap[id], t]).filter(([id]) => id));
       await query(
-        'INSERT INTO day_plans (id, trip_id, title, place_ids, pinned_place_ids, sort_order) VALUES ($1,$2,$3,$4,$5,$6)',
-        [`${p.id}-copy-${newTripId.slice(0,8)}`, newTripId, p.title, JSON.stringify(newPlaceIds), JSON.stringify(newPinnedIds), i]
+        'INSERT INTO day_plans (id, trip_id, title, place_ids, pinned_place_ids, pinned_times, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [`${p.id}-copy-${newTripId.slice(0,8)}`, newTripId, p.title, JSON.stringify(newPlaceIds), JSON.stringify(newPinnedIds), JSON.stringify(newPinnedTimes), i]
       );
     }
 
@@ -494,6 +509,7 @@ function buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visite
   }));
   const currentPlan = (dayPlans || []).map((d) => ({
     day: d.title, id: d.id, places: d.placeIds || [], pinned: d.pinnedPlaceIds || [],
+    pinnedTimes: d.pinnedTimes || {},
   }));
   const flightsInfo = (flights || []).map((f) => ({
     type: f.type === 'arrival' ? 'נחיתה' : 'המראה',
@@ -876,7 +892,7 @@ app.put('/api/hotel', async (_req, res) => res.json({ ok: true }));
 app.get('/api/trips/:tripId/plans', requireAuth, async (req, res) => {
   try {
     const result = await query('SELECT * FROM day_plans WHERE trip_id=$1 ORDER BY sort_order ASC', [req.params.tripId]);
-    res.json(result.rows.map((r) => ({ id: r.id, title: r.title, placeIds: r.place_ids, pinnedPlaceIds: r.pinned_place_ids ?? [] })));
+    res.json(result.rows.map((r) => ({ id: r.id, title: r.title, placeIds: r.place_ids, pinnedPlaceIds: r.pinned_place_ids ?? [], pinnedTimes: r.pinned_times ?? {} })));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -888,8 +904,8 @@ app.put('/api/trips/:tripId/plans', requireAuth, async (req, res) => {
     for (let i = 0; i < plans.length; i++) {
       const p = plans[i];
       await query(
-        `INSERT INTO day_plans (id, trip_id, title, place_ids, pinned_place_ids, sort_order) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [p.id, req.params.tripId, p.title, JSON.stringify(p.placeIds ?? []), JSON.stringify(p.pinnedPlaceIds ?? []), i]
+        `INSERT INTO day_plans (id, trip_id, title, place_ids, pinned_place_ids, pinned_times, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [p.id, req.params.tripId, p.title, JSON.stringify(p.placeIds ?? []), JSON.stringify(p.pinnedPlaceIds ?? []), JSON.stringify(p.pinnedTimes ?? {}), i]
       );
     }
     res.json({ ok: true });
@@ -954,7 +970,7 @@ app.delete('/api/trips/:tripId/flights/:id', requireAuth, async (req, res) => {
 app.get('/api/plans', async (_req, res) => {
   try {
     const result = await query('SELECT * FROM day_plans ORDER BY sort_order ASC');
-    res.json(result.rows.map((r) => ({ id: r.id, title: r.title, placeIds: r.place_ids, pinnedPlaceIds: r.pinned_place_ids ?? [] })));
+    res.json(result.rows.map((r) => ({ id: r.id, title: r.title, placeIds: r.place_ids, pinnedPlaceIds: r.pinned_place_ids ?? [], pinnedTimes: r.pinned_times ?? {} })));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.put('/api/plans', async (_req, res) => res.json({ ok: true }));
@@ -1000,7 +1016,7 @@ app.post('/api/trips/:tripId/ai/plan', requireAuth, async (req, res) => {
       '6. אוכל בבוקר = ארוחת בוקר/קפה, אוכל בצהריים/ערב = מסעדה',
       '7. ביום ראשון/אחרון עם טיסה — פחות מקומות',
       '8. מקומות עם isVisited=true — אל תכלול שוב',
-      '9. מקומות מעוגנים (pinned) — שמור ביום שלהם',
+      '9. מקומות מעוגנים (pinned) — שמור ביום שלהם. אם pinnedTimes מכיל שעה עבור המקום — תכנן שהגעה תהיה לפני אותה שעה (כולל זמן נסיעה). שאר מקומות היום יסתדרו סביב השעה הזו',
       '10. אם יש 2 מקומות דומים מאוד — ציין בהמלצות',
       '',
       systemContext,
