@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import { Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import "leaflet/dist/leaflet.css";
 import { useAuth } from "./context/AuthContext";
 import ChatPage from "./ChatPage";
@@ -353,6 +354,16 @@ const getIconForRoute = (key: string, isActive: boolean) => {
   }
 };
 
+function useWindowSize() {
+  const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  useEffect(() => {
+    const handleResize = () => setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+  return windowSize;
+}
+
 function App() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -465,6 +476,10 @@ function App() {
   const selectedPlace = useMemo(() => selectedPlaceId ? places.find((place) => place.id === selectedPlaceId) ?? null : null, [places, selectedPlaceId]);
   const modalPlace = useMemo(() => modalPlaceId ? places.find((place) => place.id === modalPlaceId) ?? null : null, [modalPlaceId, places]);
   const activeView = selectedPlaceId ? null : getViewFromPathname(location.pathname, tripId);
+  const windowSize = useWindowSize();
+  const isMobilePlanner = windowSize.width < 768;
+  const activePlannerDayKey = activePlannerDayId ?? dayPlans[0]?.id ?? null;
+  const activePlannerDayIndex = dayPlans.findIndex((day) => day.id === activePlannerDayKey);
   // Reset settings draft to current saved values whenever settings page is opened
   useEffect(() => { if (activeView === "settings") { setSettingsDraft(tripConfig); setSettingsSaveState("idle"); } }, [activeView]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── sync localStorage (fast cache) ──────────────────────────────────────
@@ -1366,60 +1381,116 @@ function App() {
             </div>
           </section>
         )}
-        {!selectedPlaceId && activeView === "planner" && (
-          <section className="planner-stack">
-            <div className="section-head">
-              <div>
-                <span className="workspace-eyebrow">Planner Engine</span>
-                <h2>לו"ז לשבוע</h2>
-                <span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר.</span>
+        {!selectedPlaceId && activeView === "planner" && (() => {
+          const handleSwipe = (direction: number) => {
+            const nextIndex = activePlannerDayIndex + direction;
+            if (nextIndex >= 0 && nextIndex < dayPlans.length) {
+              const nextDay = dayPlans[nextIndex];
+              setActivePlannerDayId(nextDay.id);
+              if (!isMobilePlanner) {
+                plannerDayRefs.current[nextDay.id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            }
+          };
+
+          return (
+            <section className="planner-stack">
+              <div className="section-head">
+                <div>
+                  <span className="workspace-eyebrow">Planner Engine</span>
+                  <h2>לו"ז לשבוע</h2>
+                  <span>{isMobilePlanner ? "החלק ימינה או שמאלה כדי לעבור בין הימים" : "אפשר לשבץ ידנית, לגרור עם תמונות, ולעגן מקומות."}</span>
+                </div>
+                <div className="planner-toolbar">
+                  <span>{activeDaysCount} ימים פעילים</span>
+                </div>
               </div>
-              <div className="planner-toolbar">
-                <span>{activeDaysCount} ימים פעילים</span>
+              <div className="planner-day-selector" aria-label="בחירת יום">
+                {dayPlans.map((day, index) => {
+                  const isActive = (activePlannerDayId ?? dayPlans[0]?.id) === day.id;
+                  return (
+                    <button
+                      key={day.id}
+                      type="button"
+                      className={`planner-day-chip${isActive ? " active" : ""}`}
+                      onClick={() => {
+                        setActivePlannerDayId(day.id);
+                        if (!isMobilePlanner) {
+                          plannerDayRefs.current[day.id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
+                      }}
+                    >
+                      <motion.div
+                        initial={false}
+                        animate={{ scale: isActive ? 1.05 : 1 }}
+                        transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                      >
+                        <span>{day.title}</span>
+                        <strong>{tripConfig.startDate ? new Date(new Date(tripConfig.startDate + "T12:00:00").setDate(new Date(tripConfig.startDate + "T12:00:00").getDate() + index)).toLocaleDateString("he-IL", { day: "numeric" }) : index + 1}</strong>
+                      </motion.div>
+                    </button>
+                  );
+                })}
               </div>
-            </div>
-            <div className="planner-day-selector" aria-label="בחירת יום">
-              {dayPlans.map((day, index) => {
-                const isActive = (activePlannerDayId ?? dayPlans[0]?.id) === day.id;
-                return (
-                  <button
-                    key={day.id}
-                    type="button"
-                    className={`planner-day-chip${isActive ? " active" : ""}`}
-                    onClick={() => {
-                      setActivePlannerDayId(day.id);
-                      plannerDayRefs.current[day.id]?.scrollIntoView({ behavior: "smooth", block: "start" });
-                    }}
-                  >
-                    <span>{day.title}</span>
-                    <strong>{tripConfig.startDate ? new Date(new Date(tripConfig.startDate + "T12:00:00").setDate(new Date(tripConfig.startDate + "T12:00:00").getDate() + index)).toLocaleDateString("he-IL", { day: "numeric" }) : index + 1}</strong>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="workspace-summary-grid">
-              <div className="workspace-summary-card">
-                <strong>{dayPlans.length}</strong>
-                <span>ימים במסלול</span>
+              {aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}
+              <div className="swipe-container">
+                <AnimatePresence mode="wait">
+                  {isMobilePlanner ? (
+                    <motion.div
+                      key={activePlannerDayKey}
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      transition={{ duration: 0.2 }}
+                      drag="x"
+                      dragConstraints={{ left: 0, right: 0 }}
+                      onDragEnd={(_, info) => {
+                        if (info.offset.x > 100) handleSwipe(-1); // Right swipe -> Prev day
+                        else if (info.offset.x < -100) handleSwipe(1); // Left swipe -> Next day
+                      }}
+                    >
+                      {renderPlannerDay(dayPlans[activePlannerDayIndex] || dayPlans[0])}
+                    </motion.div>
+                  ) : (
+                    dayPlans.map(renderPlannerDay)
+                  )}
+                </AnimatePresence>
               </div>
-              <div className="workspace-summary-card">
-                <strong>{unplannedPlaces.length}</strong>
-                <span>עדיין לא שובצו</span>
-              </div>
-              <div className="workspace-summary-card">
-                <strong>{dayPlans.reduce((sum, day) => sum + day.pinnedPlaceIds.length, 0)}</strong>
-                <span>עוגנים בזמן</span>
-              </div>
-              <div className="workspace-summary-card">
-                <strong>{flights.length}</strong>
-                <span>אילוצי טיסה</span>
-              </div>
-            </div>
-            {aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}
-            {dayPlans.map(renderPlannerDay)}
-            {!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}
-          </section>
-        )}
+
+              {!!unplannedPlaces.length && (
+                <article className="panel" style={{ marginTop: "2rem" }}>
+                  <div className="section-head">
+                    <div>
+                      <h3>עדיין לא שובצו</h3>
+                      <span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span>
+                    </div>
+                  </div>
+                  <div className="planner-image-grid unplanned-image-grid">
+                    {unplannedPlaces.map((place) => (
+                      <article
+                        key={place.id}
+                        className="planner-place-card planner-place-card-clickable planner-place-card-compact"
+                        draggable
+                        onClick={() => openPlacePage(place.id)}
+                        onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }}
+                        onDragStart={() => handlePlaceDragStart(null, place.id)}
+                        onDragEnd={handlePlaceDragEnd}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" />
+                        <div className="planner-place-content">
+                          <strong>{place.name}</strong>
+                          <p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </article>
+              )}
+            </section>
+          );
+        })()}
         {!selectedPlaceId && activeView === "settings" && (
           <section className="settings-page">
             {/* ── Trip info ── */}

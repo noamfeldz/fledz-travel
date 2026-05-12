@@ -120,19 +120,21 @@ export default function DashboardPage() {
   return (
     <div className="dashboard-page" dir="rtl">
       <header className="dashboard-header">
-        <span className="dashboard-logo">✈️ פלדז טיולים</span>
-        <div className="dashboard-user" onClick={() => setMenuOpen((v) => !v)}>
-          {user?.avatarUrl ? (
-            <img src={user.avatarUrl} alt={user.name} className="dashboard-avatar" />
-          ) : (
-            <div className="dashboard-avatar-placeholder">{user?.name?.[0] ?? "?"}</div>
-          )}
-          <span className="dashboard-user-name">{user?.name}</span>
-          {menuOpen && (
-            <div className="dashboard-user-menu">
-              <button onClick={logout}>התנתק</button>
-            </div>
-          )}
+        <div className="dashboard-header-inner">
+          <span className="dashboard-logo">✈️ פלדז טיולים</span>
+          <div className="dashboard-user" onClick={() => setMenuOpen((v) => !v)}>
+            {user?.avatarUrl ? (
+              <img src={user.avatarUrl} alt={user.name} className="dashboard-avatar" />
+            ) : (
+              <div className="dashboard-avatar-placeholder">{user?.name?.[0] ?? "?"}</div>
+            )}
+            <span className="dashboard-user-name">{user?.name}</span>
+            {menuOpen && (
+              <div className="dashboard-user-menu">
+                <button onClick={logout}>התנתק</button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
