@@ -370,6 +370,7 @@ function App() {
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareLinks, setShareLinks] = useState<{ viewer?: string; editor?: string }>({});
   const [shareLoading, setShareLoading] = useState(false);
+  const [mainMenuOpen, setMainMenuOpen] = useState(false);
 
   const storageKeys = useMemo(() => ({
     places: tripId ? `fledz-${tripId}-places` : STORAGE_KEYS.places,
@@ -399,6 +400,9 @@ function App() {
       setShareLoading(false);
     }
   }
+  useEffect(() => {
+    setMainMenuOpen(false);
+  }, [location.pathname, location.search]);
   const [places, setPlaces] = useState<Place[]>(() => readLocalStorage(STORAGE_KEYS.places, seededPlaces));
 
   const [hotel, setHotel] = useState<Hotel>(() => readLocalStorage(STORAGE_KEYS.hotel, defaultHotel));
@@ -1200,11 +1204,46 @@ function App() {
     );
   };
   const tripContext = { places, hotel, dayPlans, tripConfig, flights, visitedIds };
+  const renderTripShellNavigation = () => (
+    <>
+      <header className="trip-top-bar">
+        <button
+          className="trip-top-bar-menu"
+          type="button"
+          aria-label={mainMenuOpen ? "סגירת תפריט ראשי" : "פתיחת תפריט ראשי"}
+          aria-expanded={mainMenuOpen}
+          aria-controls="trip-main-menu"
+          onClick={() => setMainMenuOpen((prev) => !prev)}
+        >
+          {mainMenuOpen ? "✕" : "☰"}
+        </button>
+      </header>
+      {mainMenuOpen && <button className="trip-main-menu-overlay" type="button" aria-label="סגירת תפריט ראשי" onClick={() => setMainMenuOpen(false)} />}
+      <aside id="trip-main-menu" className={mainMenuOpen ? "trip-main-menu open" : "trip-main-menu"} aria-label="תפריט ראשי">
+        <div className="trip-main-menu-header">
+          <div className="trip-main-menu-user">
+            {user?.avatarUrl
+              ? <img src={user.avatarUrl} alt={user.name} className="trip-user-avatar" />
+              : <span className="trip-user-initials">{user?.name?.[0] ?? "?"}</span>}
+            <div className="trip-main-menu-user-text">
+              <strong>{user?.name || "המשתמש שלי"}</strong>
+              <span>{tripConfig.tripName || "הטיול שלי"}</span>
+            </div>
+          </div>
+        </div>
+        <div className="trip-main-menu-links">
+          <button type="button" className="trip-main-menu-item" onClick={() => { setMainMenuOpen(false); navigate("/dashboard"); }}>הטיולים שלי</button>
+          <button type="button" className="trip-main-menu-item" onClick={() => { setMainMenuOpen(false); logout(); }}>התנתק</button>
+        </div>
+      </aside>
+    </>
+  );
 
   // Chat page renders fullscreen (bypasses main content)
   if (activeView === "chat") {
     return (
       <div className="app-shell">
+        {renderTripShellNavigation()}
         <nav className="bottom-nav" aria-label="ניווט ראשי">
           <div className="nav-container">
             {routeItems.map((item) => {
@@ -1230,24 +1269,7 @@ function App() {
 
   return (
     <div className="app-shell" dir="rtl">
-      {/* ── Trip top bar ── */}
-      <header className="trip-top-bar">
-        <button className="trip-top-bar-back" onClick={() => navigate("/dashboard")} title="חזרה לטיולים שלי">
-          ← כל הטיולים
-        </button>
-        <span className="trip-top-bar-name">{tripConfig.tripName || "הטיול שלי"}</span>
-        <div className="trip-top-bar-actions">
-          <button className="share-btn" onClick={openShareModal} title="שיתוף טיול">🔗 שתף</button>
-          {user && (
-            <button className="trip-user-btn" onClick={() => navigate("/dashboard")} title={user.name}>
-              {user.avatarUrl
-                ? <img src={user.avatarUrl} alt={user.name} className="trip-user-avatar" />
-                : <span className="trip-user-initials">{user.name?.[0]}</span>}
-            </button>
-          )}
-        </div>
-      </header>
-
+      {renderTripShellNavigation()}
       <nav className="bottom-nav" aria-label="ניווט ראשי">
         <div className="nav-container">
           {routeItems.map((item) => {
