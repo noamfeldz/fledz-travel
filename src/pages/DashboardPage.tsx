@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
@@ -21,14 +22,11 @@ export default function DashboardPage() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: "", destination: "", start_date: "", end_date: "" });
   const [menuOpen, setMenuOpen] = useState(false);
-  // Trip context menu
   const [openTripMenu, setOpenTripMenu] = useState<string | null>(null);
   const tripMenuRef = useRef<HTMLDivElement | null>(null);
-  // Edit trip
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [editForm, setEditForm] = useState({ name: "", destination: "", start_date: "", end_date: "" });
   const [saving, setSaving] = useState(false);
-  // Delete trip
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -40,7 +38,6 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Close trip context menu on outside click
   useEffect(() => {
     if (!openTripMenu) return;
     const handleClick = () => setOpenTripMenu(null);
@@ -50,7 +47,12 @@ export default function DashboardPage() {
 
   function openEditTrip(trip: Trip) {
     setEditingTrip(trip);
-    setEditForm({ name: trip.name, destination: trip.destination || "", start_date: trip.start_date || "", end_date: trip.end_date || "" });
+    setEditForm({
+      name: trip.name,
+      destination: trip.destination || "",
+      start_date: trip.start_date || "",
+      end_date: trip.end_date || "",
+    });
     setOpenTripMenu(null);
   }
 
@@ -65,7 +67,7 @@ export default function DashboardPage() {
         body: JSON.stringify(editForm),
       });
       const updated = await res.json();
-      setTrips((prev) => prev.map((t) => t.id === editingTrip.id ? { ...t, ...updated } : t));
+      setTrips((prev) => prev.map((t) => (t.id === editingTrip.id ? { ...t, ...updated } : t)));
       setEditingTrip(null);
     } catch (e) {
       console.error(e);
@@ -112,15 +114,19 @@ export default function DashboardPage() {
     return end ? `${fmt(start)} – ${fmt(end)}` : fmt(start);
   }
 
+  const upcomingTrips = trips.filter((trip) => trip.start_date).length;
+  const destinations = new Set(trips.map((trip) => trip.destination).filter(Boolean)).size;
+
   return (
     <div className="dashboard-page" dir="rtl">
-      {/* ── Header ── */}
       <header className="dashboard-header">
         <span className="dashboard-logo">✈️ פלדז טיולים</span>
         <div className="dashboard-user" onClick={() => setMenuOpen((v) => !v)}>
-          {user?.avatarUrl
-            ? <img src={user.avatarUrl} alt={user.name} className="dashboard-avatar" />
-            : <div className="dashboard-avatar-placeholder">{user?.name?.[0] ?? "?"}</div>}
+          {user?.avatarUrl ? (
+            <img src={user.avatarUrl} alt={user.name} className="dashboard-avatar" />
+          ) : (
+            <div className="dashboard-avatar-placeholder">{user?.name?.[0] ?? "?"}</div>
+          )}
           <span className="dashboard-user-name">{user?.name}</span>
           {menuOpen && (
             <div className="dashboard-user-menu">
@@ -130,30 +136,88 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* ── Content ── */}
       <main className="dashboard-main">
+        <motion.section
+          className="dashboard-hero"
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <div className="dashboard-hero-copy">
+            <span className="dashboard-eyebrow">Travel OS</span>
+            <h1>מרכז הפיקוד של כל הטיולים שלכם</h1>
+            <p className="dashboard-hero-text">
+              יוצרים טיול חדש, חוזרים למסלולים קיימים, ומנהלים את כל היעדים, התאריכים והמעברים מאותו מקום.
+            </p>
+            <div className="dashboard-hero-actions">
+              <button className="dashboard-new-btn" onClick={() => setShowCreate(true)}>
+                טיול חדש
+              </button>
+              <span className="dashboard-hero-note">שיתוף, AI, מקומות, מפה וימים באותו workflow</span>
+            </div>
+          </div>
+
+          <div className="dashboard-hero-stats" aria-label="סיכום טיולים">
+            <div className="dashboard-hero-stat">
+              <strong>{trips.length}</strong>
+              <span>טיולים</span>
+            </div>
+            <div className="dashboard-hero-stat">
+              <strong>{upcomingTrips}</strong>
+              <span>עם תאריכים</span>
+            </div>
+            <div className="dashboard-hero-stat">
+              <strong>{destinations}</strong>
+              <span>יעדים שונים</span>
+            </div>
+          </div>
+        </motion.section>
+
         <div className="dashboard-title-row">
-          <h1>הטיולים שלי</h1>
-          <button className="dashboard-new-btn" onClick={() => setShowCreate(true)}>
-            + טיול חדש
-          </button>
+          <div>
+            <span className="dashboard-eyebrow">Journey Library</span>
+            <h1>הטיולים שלי</h1>
+          </div>
         </div>
 
         {loading ? (
-          <div className="dashboard-loading">טוען...</div>
+          <div className="trip-cards-grid" aria-label="טוען טיולים">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="trip-card trip-card-skeleton">
+                <div className="trip-card-image" />
+                <div className="trip-card-body">
+                  <span />
+                  <span />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="trip-cards-grid">
-            {trips.map((trip) => (
-              <div key={trip.id} className="trip-card" onClick={() => navigate(`/${trip.slug || trip.id}/places`)}>
+            {trips.map((trip, index) => (
+              <motion.article
+                key={trip.id}
+                className="trip-card"
+                onClick={() => navigate(`/${trip.slug || trip.id}/places`)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter") navigate(`/${trip.slug || trip.id}/places`); }}
+                initial={{ opacity: 0, y: 24 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.35, delay: index * 0.04 }}
+                whileHover={{ y: -8 }}
+              >
                 <div className="trip-card-image" style={trip.cover_image_url ? { backgroundImage: `url(${trip.cover_image_url})` } : {}}>
-                  {!trip.cover_image_url && <span className="trip-card-image-placeholder">🗺️</span>}
+                  {!trip.cover_image_url && <span className="trip-card-image-placeholder" aria-hidden="true">F</span>}
+                  <div className="trip-card-overlay" />
+                  {(trip.start_date || trip.end_date) && (
+                    <span className="trip-card-date-chip">{formatDates(trip.start_date, trip.end_date)}</span>
+                  )}
                 </div>
                 <div className="trip-card-body">
                   <h3 className="trip-card-name">{trip.name}</h3>
                   {trip.destination && <p className="trip-card-dest">{trip.destination}</p>}
-                  {(trip.start_date || trip.end_date) && (
-                    <p className="trip-card-dates">{formatDates(trip.start_date, trip.end_date)}</p>
-                  )}
+                  <p className="trip-card-caption">Places, planner, AI, share</p>
                 </div>
                 <div className="trip-card-actions" onClick={(e) => e.stopPropagation()}>
                   <button className="trip-card-btn-primary" onClick={() => navigate(`/${trip.slug || trip.id}/places`)}>
@@ -164,7 +228,7 @@ export default function DashboardPage() {
                       className="trip-card-menu-btn"
                       type="button"
                       aria-label="אפשרויות"
-                      onClick={(e) => { e.stopPropagation(); setOpenTripMenu((prev) => prev === trip.id ? null : trip.id); }}
+                      onClick={(e) => { e.stopPropagation(); setOpenTripMenu((prev) => (prev === trip.id ? null : trip.id)); }}
                     >
                       ⋯
                     </button>
@@ -176,26 +240,24 @@ export default function DashboardPage() {
                     )}
                   </div>
                 </div>
-              </div>
+              </motion.article>
             ))}
 
-            {/* Empty state */}
             {trips.length === 0 && (
-              <div className="trip-card trip-card-empty" onClick={() => setShowCreate(true)}>
+              <article className="trip-card trip-card-empty" onClick={() => setShowCreate(true)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") setShowCreate(true); }}>
                 <div className="trip-card-image">
-                  <span className="trip-card-image-placeholder">+</span>
+                  <span className="trip-card-image-placeholder" aria-hidden="true">+</span>
                 </div>
                 <div className="trip-card-body">
-                  <h3>צור טיול חדש</h3>
-                  <p>לחץ כדי להתחיל לתכנן</p>
+                  <h3 className="trip-card-name">צור טיול חדש</h3>
+                  <p className="trip-card-dest">שם, יעד ותאריכים מספיקים כדי להתחיל.</p>
                 </div>
-              </div>
+              </article>
             )}
           </div>
         )}
       </main>
 
-      {/* ── Create trip modal ── */}
       {showCreate && (
         <div className="modal-overlay" onClick={() => setShowCreate(false)}>
           <div className="modal-card" dir="rtl" onClick={(e) => e.stopPropagation()}>
@@ -239,7 +301,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Edit trip modal ── */}
       {editingTrip && (
         <div className="modal-overlay" onClick={() => setEditingTrip(null)}>
           <div className="modal-card" dir="rtl" onClick={(e) => e.stopPropagation()}>
@@ -282,7 +343,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Delete confirmation modal ── */}
       {confirmDeleteId && (
         <div className="modal-overlay" onClick={() => setConfirmDeleteId(null)}>
           <div className="modal-card modal-card-narrow" dir="rtl" onClick={(e) => e.stopPropagation()}>

@@ -205,35 +205,21 @@ function LazyDayMap({
   dayMapCenter: [number, number];
   hotel: Hotel;
 }) {
-  const [isMapActivated, setIsMapActivated] = useState(false);
-
   return (
     <div>
-      {isMapActivated ? (
-        <MapContainer key={`day-map-${day.id}-${day.placeIds.join("-")}`} center={dayMapCenter} zoom={12} scrollWheelZoom={false} className="day-mini-map">
-          <FitDayMapBounds points={dayMapPath} />
-          <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}>
-            <Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup>
+      <MapContainer key={`day-map-${day.id}-${day.placeIds.join("-")}`} center={dayMapCenter} zoom={12} scrollWheelZoom={false} className="day-mini-map">
+        <FitDayMapBounds points={dayMapPath} />
+        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}>
+          <Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup>
+        </Marker>
+        {dayPlaces.map((place) => (
+          <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}>
+            <Popup><strong>{place.name}</strong><div>{place.address}</div></Popup>
           </Marker>
-          {dayPlaces.map((place) => (
-            <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}>
-              <Popup><strong>{place.name}</strong><div>{place.address}</div></Popup>
-            </Marker>
-          ))}
-          {dayMapPath.length > 1 && <Polyline positions={dayMapPath} pathOptions={{ color: "#2b6cb0", weight: 4, opacity: 0.65 }} />}
-        </MapContainer>
-      ) : (
-        <div className="day-mini-map" style={{ display: "grid", placeItems: "center", gap: "0.75rem", padding: "1rem", textAlign: "center", background: "var(--color-accent-light)", color: "var(--color-text-muted)" }}>
-          <div>
-            <strong style={{ display: "block", color: "var(--color-text-main)", marginBottom: "0.35rem" }}>תצוגת מפה קלה</strong>
-            <span>{dayPlaces.length} תחנות + המלון</span>
-          </div>
-          <button type="button" className="secondary-button" onClick={() => setIsMapActivated(true)}>
-            פתח מפה
-          </button>
-        </div>
-      )}
+        ))}
+        {dayMapPath.length > 1 && <Polyline positions={dayMapPath} pathOptions={{ color: "#f97316", weight: 4, opacity: 0.72, dashArray: "10 10" }} />}
+      </MapContainer>
     </div>
   );
 }
@@ -246,7 +232,8 @@ function buildDayTimeline(day: DayPlan, places: Place[], hotel: Hotel, tripConfi
   let currentHour = startHour;
   let previousStop: Place | Hotel = hotel;
   return dayPlaces.map((place) => {
-    const travelMinutes = estimateTransport(haversineKm(previousStop, place)).minutes;
+    const travel = estimateTransport(haversineKm(previousStop, place));
+    const travelMinutes = travel.minutes;
     const openingStart = parseOpeningStartHour(place.openingHours);
     let suggestedStart = currentHour + travelMinutes / 60;
     // Skip over lunch break
@@ -263,6 +250,7 @@ function buildDayTimeline(day: DayPlan, places: Place[], hotel: Hotel, tripConfi
       startLabel: formatHourLabel(startHourFinal),
       endLabel: formatHourLabel(endHourFinal),
       dayPart: getDayPartLabel(startHourFinal),
+      travelMode: travel.mode,
       travelMinutes,
       isTight: endHourFinal > endHour,
     };
@@ -466,6 +454,8 @@ function App() {
   const [openPlaceMenu, setOpenPlaceMenu] = useState<string | null>(null);
   useEffect(() => { if (!openPlaceMenu) return; const close = () => setOpenPlaceMenu(null); document.addEventListener("click", close); return () => document.removeEventListener("click", close); }, [openPlaceMenu]);
   const [openDayMenu, setOpenDayMenu] = useState<string | null>(null);
+  const [activePlannerDayId, setActivePlannerDayId] = useState<string | null>(null);
+  const plannerDayRefs = useRef<Record<string, HTMLElement | null>>({});
   useEffect(() => { if (!openDayMenu) return; const close = () => setOpenDayMenu(null); document.addEventListener("click", close); return () => document.removeEventListener("click", close); }, [openDayMenu]);
   const selectedPlaceId = getPlaceIdFromPathname(location.pathname);
   const selectedPlace = useMemo(() => selectedPlaceId ? places.find((place) => place.id === selectedPlaceId) ?? null : null, [places, selectedPlaceId]);
@@ -700,6 +690,12 @@ function App() {
     result[day.id] = buildDayTimeline(day, places, hotel, tripConfig);
     return result;
   }, {}), [dayPlans, hotel, places, tripConfig]);
+  useEffect(() => {
+    if (!dayPlans.length) return;
+    if (!activePlannerDayId || !dayPlans.some((day) => day.id === activePlannerDayId)) {
+      setActivePlannerDayId(dayPlans[0].id);
+    }
+  }, [activePlannerDayId, dayPlans]);
   const resetPlaceEditor = () => { setPlaceDraft(emptyPlaceDraft); setEditingPlaceId(null); setImportUrl(""); setPlaceFormState({ tone: "idle", message: "" }); setLinkImportState({ tone: "idle", message: "" }); setAddPlaceMode("search"); setAutocompleteSelected(false); };
   const updatePlaceDraft = <K extends keyof PlaceDraft>(key: K, value: PlaceDraft[K]) => setPlaceDraft((current) => ({ ...current, [key]: value }));
 
@@ -1045,9 +1041,28 @@ function App() {
       base.setDate(base.getDate() + dayIndex);
       return base.toLocaleDateString("he-IL", { day: "numeric", month: "numeric" });
     })();
+    const dayTimeline = timelineByDayId[day.id] ?? [];
+    const timelineSegments = dayTimeline.reduce<Array<{ label: string; items: Array<{ place: Place; index: number; startLabel: string; endLabel: string; dayPart: string; travelMode: TransportMode; travelMinutes: number; isTight: boolean; }> }>>((segments, timelineEntry, index) => {
+      const current = segments[segments.length - 1];
+      if (!current || current.label !== timelineEntry.dayPart) {
+        segments.push({ label: timelineEntry.dayPart, items: [{ ...timelineEntry, index }] });
+      } else {
+        current.items.push({ ...timelineEntry, index });
+      }
+      return segments;
+    }, []);
+    const segmentMeta: Record<string, { icon: string; accentClass: string }> = {
+      "בוקר": { icon: "☀️", accentClass: "morning" },
+      "צהריים": { icon: "🌇", accentClass: "midday" },
+      "ערב": { icon: "🌙", accentClass: "evening" },
+    };
 
     return (
-      <article key={day.id} className="planner-day">
+      <article
+        key={day.id}
+        className={`planner-day planner-itinerary-day${activePlannerDayId === day.id ? " is-active" : ""}`}
+        ref={(node) => { plannerDayRefs.current[day.id] = node; }}
+      >
         <div className="day-head">
           <div>
             <h3>{day.title}{dayDateLabel && <span className="day-date-label">{dayDateLabel}</span>}</h3>
@@ -1089,8 +1104,13 @@ function App() {
             </div>
           </div>
         </div>
+        <div className="day-quick-stats" aria-label="סיכום היום">
+          <span><strong>{dayPlaces.length}</strong> מקומות</span>
+          <span><strong>{day.pinnedPlaceIds.length}</strong> עוגנים</span>
+          <span><strong>{day.dayEndHour ?? tripConfig.dayEndHour}:00</strong> סיום</span>
+        </div>
         {dayFlights.map((f) => (
-          <div key={f.id} className="planner-flight-banner">
+          <div key={f.id} className="planner-flight-banner planner-flight-ticket">
             <span className="planner-flight-icon">{f.type === "arrival" ? "🛬" : "🛫"}</span>
             <div className="planner-flight-info">
               <strong>{f.type === "arrival" ? "הגעה" : "יציאה"}{f.flightTime ? ` · ${f.flightTime}` : ""}{f.flightNumber ? ` · ${f.flightNumber}` : ""}</strong>
@@ -1102,35 +1122,78 @@ function App() {
         <div className="planner-day-layout">
           {!!dayPlaces.length && (
             <section className="day-map-panel">
-             
+              <div className="planner-map-header">
+                <span className="workspace-eyebrow">Route Map</span>
+                <strong>יום {dayIndex + 1} • {dayPlaces.length} תחנות</strong>
+              </div>
               <LazyDayMap day={day} dayPlaces={dayPlaces} dayMapPath={dayMapPath} dayMapCenter={dayMapCenter} hotel={hotel} />
+              <div className="planner-ai-summary">
+                <span className="workspace-eyebrow">AI Journey Summary</span>
+                <p>היום מסודר לפי סדר נסיעה והמרחקים מחושבים ביחס למלון ולתחנות שכבר שובצו.</p>
+              </div>
             </section>
           )}
-          <div className={`planner-image-grid day-drop-zone${dragTarget?.dayId === day.id && !dragTarget.targetPlaceId ? " active" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: null }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, null); }}>
-            {day.placeIds.map((placeId, index) => {
-              const place = places.find((item) => item.id === placeId);
-              if (!place) return null;
-              const isPinned = day.pinnedPlaceIds.includes(place.id);
-              const isVisited = visitedIds.includes(place.id);
+          <div className={`planner-itinerary-column day-drop-zone${dragTarget?.dayId === day.id && !dragTarget.targetPlaceId ? " active" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: null }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, null); }}>
+            {timelineSegments.map((segment) => {
+              const meta = segmentMeta[segment.label] ?? { icon: "•", accentClass: "generic" };
               return (
-                <article key={place.id} className={`planner-place-card planner-place-card-clickable${isPinned ? " is-pinned" : ""}${isVisited ? " is-visited" : ""}${dragTarget?.dayId === day.id && dragTarget.targetPlaceId === place.id ? " drag-target" : ""}`} draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(day.id, place.id)} onDragEnd={handlePlaceDragEnd} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: place.id }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, place.id); }} role="button" tabIndex={0}>
-                  <div className="place-menu-wrap">
-                    <button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); const key = `${day.id}:${place.id}`; setOpenPlaceMenu((prev) => prev === key ? null : key); }} onKeyDown={stopEventPropagation}>⋯</button>
-                    {openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { if (isPinned) { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); } else { setOpenPlaceMenu(null); setPinDialogTime(day.pinnedTimes?.[place.id] || ""); setPinDialog({ dayId: day.id, placeId: place.id, placeName: place.name }); } }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" onClick={() => { toggleVisited(place.id); setOpenPlaceMenu(null); }}>{isVisited ? "↩ בטל ביקור" : "✓ ביקרנו"}</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}
+                <section key={`${day.id}-${segment.label}`} className="planner-segment-block">
+                  <div className={`planner-segment-header ${meta.accentClass}`}>
+                    <div className="planner-segment-badge">{meta.icon}</div>
+                    <h4>{segment.label}</h4>
+                    <div className="planner-segment-line" />
                   </div>
-                  {isVisited && <span className="visited-badge">✓ ביקרנו</span>}
-                  <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" />
-                  <div className="planner-place-content">
-                    <div className="planner-place-top">
-                      <strong>{index + 1}. {place.name}</strong>
-                    </div>
-                    <p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p>
-                    {isPinned && <span className="pin-indicator">📌 מעוגן{day.pinnedTimes?.[place.id] ? ` · ${day.pinnedTimes[place.id]}` : ""}</span>}
+                  <div className="planner-segment-items">
+                    {segment.items.map((timelineEntry) => {
+                      const place = timelineEntry.place;
+                      const index = timelineEntry.index;
+                      const isPinned = day.pinnedPlaceIds.includes(place.id);
+                      const isVisited = visitedIds.includes(place.id);
+                      return (
+                        <div key={place.id} className="planner-itinerary-node">
+                          <div className={`planner-transport-row${index === 0 ? " first-stop" : ""}`}>
+                            <div className="planner-transport-icon">{timelineEntry.travelMode === "הליכה" ? "🚶" : timelineEntry.travelMode === "אוטובוס" ? "🚌" : timelineEntry.travelMode === "רכבת תחתית" ? "🚇" : "🧭"}</div>
+                            <div className="planner-transport-copy">
+                              {index === 0 ? `יציאה מהמלון • ${timelineEntry.travelMinutes} דק׳` : `${timelineEntry.travelMode} • ${timelineEntry.travelMinutes} דק׳`}
+                            </div>
+                          </div>
+                          <article className={`planner-timeline-card planner-place-card-clickable${isPinned ? " is-pinned" : ""}${isVisited ? " is-visited" : ""}${dragTarget?.dayId === day.id && dragTarget.targetPlaceId === place.id ? " drag-target" : ""}`} draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(day.id, place.id)} onDragEnd={handlePlaceDragEnd} onDragOver={(event) => { event.preventDefault(); setDragTarget({ dayId: day.id, targetPlaceId: place.id }); }} onDrop={(event) => { event.preventDefault(); handleDayDrop(day.id, place.id); }} role="button" tabIndex={0}>
+                            <div className="planner-timeline-node-dot" />
+                            <div className="place-menu-wrap">
+                              <button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); const key = `${day.id}:${place.id}`; setOpenPlaceMenu((prev) => prev === key ? null : key); }} onKeyDown={stopEventPropagation}>⋯</button>
+                              {openPlaceMenu === `${day.id}:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { movePlace(day.id, index, -1); setOpenPlaceMenu(null); }}>⬆ למעלה</button><button type="button" onClick={() => { movePlace(day.id, index, 1); setOpenPlaceMenu(null); }}>⬇ למטה</button><button type="button" onClick={() => { if (isPinned) { togglePlacePin(day.id, place.id); setOpenPlaceMenu(null); } else { setOpenPlaceMenu(null); setPinDialogTime(day.pinnedTimes?.[place.id] || ""); setPinDialog({ dayId: day.id, placeId: place.id, placeName: place.name }); } }}>{isPinned ? "🔓 שחרור עיגון" : "📌 עיגון"}</button><button type="button" onClick={() => { toggleVisited(place.id); setOpenPlaceMenu(null); }}>{isVisited ? "↩ בטל ביקור" : "✓ ביקרנו"}</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><button type="button" className="danger" onClick={() => { removePlaceFromDay(day.id, place.id); setOpenPlaceMenu(null); }}>✕ הסר</button></div>}
+                            </div>
+                            {isVisited && <span className="visited-badge">✓ ביקרנו</span>}
+                            <div className="planner-timeline-media">
+                              <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" />
+                            </div>
+                            <div className="planner-timeline-content">
+                              <div className="planner-timeline-top">
+                                <div>
+                                  <div className="planner-timeline-time">{timelineEntry.startLabel} <span>→ {timelineEntry.endLabel}</span></div>
+                                  <strong>{place.name}</strong>
+                                </div>
+                                <div className="planner-timeline-actions">
+                                  <span className="planner-itinerary-tag">{getPlannerPlaceTone(place, timelineEntry.dayPart)}</span>
+                                </div>
+                              </div>
+                              <p>{place.shortDescription || `${place.area || "ללא אזור"} • ${place.station || "ללא תחנה"}`}</p>
+                              <div className="planner-place-meta-row">
+                                <span>{place.type}</span>
+                                <span>{place.visitDurationMinutes ? `${place.visitDurationMinutes} דק׳` : `${Math.round(getVisitDurationHours(place.type) * 60)} דק׳`}</span>
+                              </div>
+                              {isPinned && <span className="pin-indicator">📌 מעוגן{day.pinnedTimes?.[place.id] ? ` · ${day.pinnedTimes[place.id]}` : ""}</span>}
+                              {timelineEntry.isTight && <span className="planner-tight-warning">היום צפוף ביחס לשעת הסיום שהוגדרה</span>}
+                            </div>
+                          </article>
+                        </div>
+                      );
+                    })}
                   </div>
-                </article>
+                </section>
               );
             })}
-            {!day.placeIds.length && <p>עדיין אין מקומות ביום הזה. אפשר להתחיל להוסיף או לגרור לכאן.</p>}
+            {!day.placeIds.length && <p className="planner-empty-day">עדיין אין מקומות ביום הזה. אפשר להתחיל להוסיף או לגרור לכאן.</p>}
           </div>
         </div>
       </article>
@@ -1201,10 +1264,140 @@ function App() {
       <main className="content-stack">
         {selectedPlaceId && !selectedPlace && <section className="panel"><div className="section-head"><div><h2>המקום לא נמצא</h2><span>יכול להיות שהוא נמחק או שכתובת העמוד לא תקינה.</span></div><button type="button" onClick={() => navigate(viewPaths.home)}>חזרה למקומות</button></div></section>}
         {selectedPlace && <>{renderPlaceDetails(selectedPlace)}{editingPlaceId === selectedPlace.id && renderPlaceForm("עריכת מקום", "כאן אפשר לערוך את כל המידע הרלוונטי של המקום.", "שמירת שינויים", stopEditingPlace)}</>}
-        {!selectedPlaceId && activeView === "home" && <><section className="action-panel"><div className="section-head"><h2>המקומות שלי</h2><button type="button" onClick={startAddingPlace}>הוספת מקום</button></div></section><section className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" /><div className="filters-row"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="הכול">כל הסוגים</option>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>{areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}</select></div></section><section className="place-grid">{filteredPlaces.map((place) => { const assignedDayId = assignedDayByPlaceId[place.id] || ""; const isPinned = Boolean(pinnedDayByPlaceId[place.id]); return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>; })}</section></>}
+        {!selectedPlaceId && activeView === "home" && (
+          <>
+            <section className="action-panel workspace-hero-panel">
+              <div className="section-head">
+                <div>
+                  <span className="workspace-eyebrow">Places OS</span>
+                  <h2>המקומות שלי</h2>
+                  <span>כאן מתחיל כל טיול: איסוף, סינון ושיבוץ של המקומות שבאמת שווים מקום במסלול.</span>
+                </div>
+                <button type="button" onClick={startAddingPlace}>הוספת מקום</button>
+              </div>
+              <div className="workspace-summary-grid" aria-label="סיכום מקומות">
+                <div className="workspace-summary-card">
+                  <strong>{places.length}</strong>
+                  <span>מקומות שמורים</span>
+                </div>
+                <div className="workspace-summary-card">
+                  <strong>{dayPlans.filter((day) => day.placeIds.length).length}</strong>
+                  <span>ימים פעילים</span>
+                </div>
+                <div className="workspace-summary-card">
+                  <strong>{pinnedDayByPlaceId ? Object.keys(pinnedDayByPlaceId).length : 0}</strong>
+                  <span>עוגנים קבועים</span>
+                </div>
+                <div className="workspace-summary-card">
+                  <strong>{flights.length}</strong>
+                  <span>טיסות שמורות</span>
+                </div>
+              </div>
+            </section>
+            <section className="filters">
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="חיפוש לפי שם, תיאור או כתובת" />
+              <div className="filters-row">
+                <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+                  <option value="הכול">כל הסוגים</option>
+                  {placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+                <select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}>
+                  {areaOptions.map((area) => <option key={area} value={area}>{area === "הכול" ? "כל האזורים" : area}</option>)}
+                </select>
+              </div>
+            </section>
+            <section className="place-grid">
+              {filteredPlaces.map((place) => {
+                const assignedDayId = assignedDayByPlaceId[place.id] || "";
+                const isPinned = Boolean(pinnedDayByPlaceId[place.id]);
+                return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>;
+              })}
+            </section>
+          </>
+        )}
         {!selectedPlaceId && activeView === "hotel" && <section><div className="section-head"><div><h2>המלון שלך</h2><span>מכאן מחושבים המרחקים וזמני ההגעה</span></div><button type="button" onClick={() => setIsEditingHotel((current) => !current)}>{isEditingHotel ? "סגירת עריכה" : "עריכת מלון"}</button></div><button className="secondary-button" type="button" onClick={applyDefaultHotel} style={{marginBottom: "1rem"}}>שימוש במלון שלנו: Park Plaza Victoria London</button><div className="hotel-status"><strong>{hotel.name}</strong><p>{hotel.address}</p><p>מיקום שמור: {hotel.lat.toFixed(4)}, {hotel.lng.toFixed(4)}</p>{hotelLookupState === "loading" && <p>מחפש את המיקום לפי הכתובת...</p>}{hotelLookupState === "done" && <p>המלון נשמר והמרחקים עודכנו.</p>}{hotelLookupState === "error" && <p>לא הצלחנו למצוא את הכתובת אוטומטית. אפשר לשמור קווי אורך ורוחב ידנית.</p>}</div>{isEditingHotel && <form className="form-layout" style={{marginTop: "1.5rem"}} onSubmit={handleHotelSubmit}><div className="form-stack"><label>שם המלון<input name="name" defaultValue={hotel.name} /></label><label>כתובת<input name="address" defaultValue={hotel.address} /></label><label>קו רוחב<input name="lat" defaultValue={hotel.lat} /></label><label>קו אורך<input name="lng" defaultValue={hotel.lng} /></label></div><div className="inline-actions"><button type="submit">שמירת מלון</button></div></form>}</section>}
-        {!selectedPlaceId && activeView === "map" && <section className="map-panel"><div className="section-head"><h2>מפת המקומות</h2><span>מציגה את המלון ואת כל המקומות</span></div><MapContainer center={[hotel.lat, hotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}><Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup></Marker>{places.map((place) => { const trip = estimateTransport(haversineKm(hotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer><div className="map-legend"><div className="legend-row"><span className="legend-chip hotel">Hotel</span><span className="legend-chip place">Places</span></div>{places.map((place) => <div key={place.id} className="saved-item saved-item-clickable compact" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}</div></section>}
-        {!selectedPlaceId && activeView === "planner" && <section className="planner-stack"><div className="section-head"><div><h2>לו"ז לשבוע</h2><span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר</span></div><div className="planner-toolbar"><span>{activeDaysCount} ימים פעילים</span></div></div>{aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}{dayPlans.map(renderPlannerDay)}{!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}</section>}
+        {!selectedPlaceId && activeView === "map" && (
+          <section className="map-panel">
+            <div className="map-stage">
+              <div className="section-head">
+                <div>
+                  <span className="workspace-eyebrow">Map Layer</span>
+                  <h2>מפת המקומות</h2>
+                  <span>תמונה אחת של כל הטיול: המלון, כל התחנות, וזמני ההגעה מכל בסיס.</span>
+                </div>
+              </div>
+              <MapContainer center={[hotel.lat, hotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /><Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}><Popup><strong>{hotel.name}</strong><div>{hotel.address}</div></Popup></Marker>{places.map((place) => { const trip = estimateTransport(haversineKm(hotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={markerIcon}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer>
+            </div>
+            <div className="map-legend">
+              <div className="legend-row"><span className="legend-chip hotel">Hotel</span><span className="legend-chip place">Places</span></div>
+              <div className="workspace-summary-grid workspace-summary-grid--compact">
+                <div className="workspace-summary-card">
+                  <strong>{places.length}</strong>
+                  <span>נקודות על המפה</span>
+                </div>
+                <div className="workspace-summary-card">
+                  <strong>{hotel.name ? 1 : 0}</strong>
+                  <span>מלון פעיל</span>
+                </div>
+              </div>
+              {places.map((place) => <div key={place.id} className="saved-item saved-item-clickable compact" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}
+            </div>
+          </section>
+        )}
+        {!selectedPlaceId && activeView === "planner" && (
+          <section className="planner-stack">
+            <div className="section-head">
+              <div>
+                <span className="workspace-eyebrow">Planner Engine</span>
+                <h2>לו"ז לשבוע</h2>
+                <span>אפשר לשבץ ידנית, לגרור עם תמונות, לעגן מקומות ספציפיים, ואז לחלק אוטומטית את כל השאר.</span>
+              </div>
+              <div className="planner-toolbar">
+                <span>{activeDaysCount} ימים פעילים</span>
+              </div>
+            </div>
+            <div className="planner-day-selector" aria-label="בחירת יום">
+              {dayPlans.map((day, index) => {
+                const isActive = (activePlannerDayId ?? dayPlans[0]?.id) === day.id;
+                return (
+                  <button
+                    key={day.id}
+                    type="button"
+                    className={`planner-day-chip${isActive ? " active" : ""}`}
+                    onClick={() => {
+                      setActivePlannerDayId(day.id);
+                      plannerDayRefs.current[day.id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                  >
+                    <span>{day.title}</span>
+                    <strong>{tripConfig.startDate ? new Date(new Date(tripConfig.startDate + "T12:00:00").setDate(new Date(tripConfig.startDate + "T12:00:00").getDate() + index)).toLocaleDateString("he-IL", { day: "numeric" }) : index + 1}</strong>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="workspace-summary-grid">
+              <div className="workspace-summary-card">
+                <strong>{dayPlans.length}</strong>
+                <span>ימים במסלול</span>
+              </div>
+              <div className="workspace-summary-card">
+                <strong>{unplannedPlaces.length}</strong>
+                <span>עדיין לא שובצו</span>
+              </div>
+              <div className="workspace-summary-card">
+                <strong>{dayPlans.reduce((sum, day) => sum + day.pinnedPlaceIds.length, 0)}</strong>
+                <span>עוגנים בזמן</span>
+              </div>
+              <div className="workspace-summary-card">
+                <strong>{flights.length}</strong>
+                <span>אילוצי טיסה</span>
+              </div>
+            </div>
+            {aiPlanResult && <div className="ai-plan-result"><div className="ai-plan-header"><strong>✨ תוכנית AI</strong><button type="button" onClick={() => applyAiPlan(aiPlanResult)}>החל תוכנית</button><button type="button" className="secondary-button" onClick={() => setAiPlanResult(null)}>סגור</button></div>{aiPlanResult.summary && <p className="ai-plan-summary">{aiPlanResult.summary}</p>}{!!aiPlanResult.recommendations?.length && <div className="ai-recommendations"><strong>המלצות:</strong><ul>{aiPlanResult.recommendations.map((rec, i) => <li key={i}>{rec}</li>)}</ul></div>}{!!aiPlanResult.excluded?.length && <div className="ai-excluded"><strong>מוחרגים מהתוכנית:</strong> {aiPlanResult.excluded.map((item) => places.find((p) => p.id === item.placeId)?.name || item.placeId).join(", ")}</div>}</div>}
+            {dayPlans.map(renderPlannerDay)}
+            {!!unplannedPlaces.length && <article className="panel"><div className="section-head"><div><h3>עדיין לא שובצו</h3><span>אפשר לגרור אותם ליום מתאים או לתת לחלוקה האוטומטית לשבץ</span></div></div><div className="planner-image-grid unplanned-image-grid">{unplannedPlaces.map((place) => <article key={place.id} className="planner-place-card planner-place-card-clickable planner-place-card-compact" draggable onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} onDragStart={() => handlePlaceDragStart(null, place.id)} onDragEnd={handlePlaceDragEnd} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" /><div className="planner-place-content"><strong>{place.name}</strong><p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p></div></article>)}</div></article>}
+          </section>
+        )}
         {!selectedPlaceId && activeView === "settings" && (
           <section className="settings-page">
             {/* ── Trip info ── */}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 type TripSnapshot = {
@@ -34,7 +35,6 @@ export default function ShareViewPage() {
 
   async function copyTrip() {
     if (!user) {
-      // Redirect to login, then back to this share page
       window.location.href = `/auth/google?redirect=/share/${token}`;
       return;
     }
@@ -61,7 +61,9 @@ export default function ShareViewPage() {
   if (error) return <div className="share-error" dir="rtl">❌ {error}</div>;
   if (!snapshot) return null;
 
-  const { trip, places, hotel, flights } = snapshot;
+  const { trip, places, hotel, flights, plans } = snapshot;
+  const placeList = places as Array<{ name: string; type: string; notes?: string; priority?: number }>;
+  const planCount = (plans as unknown[]).length;
 
   return (
     <div className="share-page" dir="rtl">
@@ -73,7 +75,13 @@ export default function ShareViewPage() {
       </header>
 
       <main className="share-main">
-        <div className="share-hero">
+        <motion.section
+          className="share-hero"
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <span className="dashboard-eyebrow">Shared Journey</span>
           <h1 className="share-trip-name">{trip.name}</h1>
           {trip.destination && <p className="share-trip-dest">📍 {trip.destination}</p>}
           {(trip.start_date || trip.end_date) && (
@@ -83,33 +91,69 @@ export default function ShareViewPage() {
               {trip.end_date ? new Date(trip.end_date).toLocaleDateString("he-IL") : ""}
             </p>
           )}
-        </div>
+          <p className="share-hero-copy">
+            תצוגה מוכנה לשיתוף של הטיול, עם כל המקומות, הטיסות והבסיס לתכנון. אפשר לצפות, ואז להעתיק אותו לחשבון שלך להמשך עבודה.
+          </p>
+        </motion.section>
 
         <div className="share-stats">
-          <div className="share-stat"><span className="share-stat-num">{(places as unknown[]).length}</span><span>מקומות</span></div>
-          <div className="share-stat"><span className="share-stat-num">{(flights as unknown[]).length}</span><span>טיסות</span></div>
-          {!!hotel && <div className="share-stat"><span className="share-stat-num">✓</span><span>מלון</span></div>}
+          <div className="share-stat">
+            <span className="share-stat-num">{placeList.length}</span>
+            <span>מקומות</span>
+          </div>
+          <div className="share-stat">
+            <span className="share-stat-num">{(flights as unknown[]).length}</span>
+            <span>טיסות</span>
+          </div>
+          <div className="share-stat">
+            <span className="share-stat-num">{planCount}</span>
+            <span>ימים</span>
+          </div>
+          {!!hotel && (
+            <div className="share-stat">
+              <span className="share-stat-num">✓</span>
+              <span>מלון</span>
+            </div>
+          )}
         </div>
 
-        <div className="share-section">
+        <section className="share-section">
           <h2>מקומות לביקור</h2>
-          {(places as Array<{ name: string; type: string; notes?: string; priority?: number }>).length === 0 ? (
+          {placeList.length === 0 ? (
             <p className="share-empty">אין מקומות עדיין</p>
           ) : (
             <ul className="share-places-list">
-              {(places as Array<{ name: string; type: string; notes?: string; priority?: number }>).slice(0, 20).map((p, i) => (
+              {placeList.slice(0, 20).map((p, i) => (
                 <li key={i} className="share-place-item">
                   <span className="share-place-name">{p.name}</span>
                   {p.type && <span className="share-place-type">{p.type}</span>}
                   {p.priority && <span className="share-place-priority">{"★".repeat(p.priority)}</span>}
                 </li>
               ))}
-              {(places as unknown[]).length > 20 && (
-                <li className="share-places-more">+ {(places as unknown[]).length - 20} מקומות נוספים</li>
+              {placeList.length > 20 && (
+                <li className="share-places-more">+ {placeList.length - 20} מקומות נוספים</li>
               )}
             </ul>
           )}
-        </div>
+        </section>
+
+        <section className="share-section">
+          <h2>למה להעתיק את הטיול</h2>
+          <div className="share-benefits-grid">
+            <article className="share-benefit-card">
+              <strong>מסלול קיים</strong>
+              <p>מתחילים מטיול שיש בו כבר מקומות, כיוון ותאריכים במקום לבנות הכל מאפס.</p>
+            </article>
+            <article className="share-benefit-card">
+              <strong>עריכה מלאה</strong>
+              <p>אחרי ההעתקה אפשר לשנות ימים, להוסיף טיסות, לגרור מקומות ולתכנן מחדש עם AI.</p>
+            </article>
+            <article className="share-benefit-card">
+              <strong>אותו workflow</strong>
+              <p>ממשיכים ישר למפה, למקומות וללו״ז מתוך חשבון שלך בלי להעביר קבצים או הודעות.</p>
+            </article>
+          </div>
+        </section>
 
         <div className="share-cta">
           <p>רוצים להעתיק את הטיול הזה לחשבון שלכם?</p>
