@@ -114,8 +114,6 @@ export default function DashboardPage() {
     return end ? `${fmt(start)} – ${fmt(end)}` : fmt(start);
   }
 
-  const upcomingTrips = trips.filter((trip) => trip.start_date).length;
-  const destinations = new Set(trips.map((trip) => trip.destination).filter(Boolean)).size;
 
   return (
     <div className="dashboard-page" dir="rtl">
@@ -139,47 +137,14 @@ export default function DashboardPage() {
       </header>
 
       <main className="dashboard-main">
-        <motion.section
-          className="dashboard-hero"
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          <div className="dashboard-hero-copy">
-            <span className="dashboard-eyebrow">Travel OS</span>
-            <h1>מרכז הפיקוד של כל הטיולים שלכם</h1>
-            <p className="dashboard-hero-text">
-              יוצרים טיול חדש, חוזרים למסלולים קיימים, ומנהלים את כל היעדים, התאריכים והמעברים מאותו מקום.
-            </p>
-            <div className="dashboard-hero-actions">
-              <button className="dashboard-new-btn" onClick={() => setShowCreate(true)}>
-                טיול חדש
-              </button>
-              <span className="dashboard-hero-note">שיתוף, AI, מקומות, מפה וימים באותו workflow</span>
-            </div>
-          </div>
-
-          <div className="dashboard-hero-stats" aria-label="סיכום טיולים">
-            <div className="dashboard-hero-stat">
-              <strong>{trips.length}</strong>
-              <span>טיולים</span>
-            </div>
-            <div className="dashboard-hero-stat">
-              <strong>{upcomingTrips}</strong>
-              <span>עם תאריכים</span>
-            </div>
-            <div className="dashboard-hero-stat">
-              <strong>{destinations}</strong>
-              <span>יעדים שונים</span>
-            </div>
-          </div>
-        </motion.section>
-
         <div className="dashboard-title-row">
           <div>
             <span className="dashboard-eyebrow">Journey Library</span>
             <h1>הטיולים שלי</h1>
           </div>
+          <button className="dashboard-new-btn" onClick={() => setShowCreate(true)}>
+            + טיול חדש
+          </button>
         </div>
 
         {loading ? (

@@ -2271,21 +2271,6 @@ input:focus, select:focus, textarea:focus {
 /* ─────────────────────────────────────────────────────────────────────
    DASHBOARD PAGE
    ───────────────────────────────────────────────────────────────────── */
-.dashboard-page {
-  min-height: 100vh;
-  background: #f8fafc;
-  direction: rtl;
-}
-
-.dashboard-header {
-  background: #0f172a;
-  color: #fff;
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
 .dashboard-header-inner {
   max-width: 1320px;
   margin: 0 auto;
@@ -3612,25 +3597,6 @@ textarea:focus-visible,
   border-top: 1px solid rgba(31, 41, 51, 0.08);
 }
 
-.dashboard-page {
-  min-height: 100dvh;
-  background:
-    radial-gradient(circle at 85% 0%, rgba(210, 176, 116, 0.18), transparent 24rem),
-    #f8f5ef;
-}
-
-.dashboard-header {
-  background: rgba(255, 253, 248, 0.86);
-  border-bottom-color: rgba(31, 41, 51, 0.08);
-  backdrop-filter: blur(16px);
-}
-
-.dashboard-logo,
-.dashboard-title-row h1,
-.trip-card-name {
-  color: #17211f;
-}
-
 .dashboard-main {
   max-width: 1120px;
   padding-top: clamp(1.5rem, 4vw, 3rem);
@@ -3650,7 +3616,7 @@ textarea:focus-visible,
 }
 
 .dashboard-title-row h1 {
-  font-size: clamp(2rem, 4vw, 3.2rem);
+  font-size: clamp(1.5rem, 5vw, 2.25rem);
   line-height: 1;
 }
 
@@ -3662,8 +3628,10 @@ textarea:focus-visible,
 }
 
 .trip-cards-grid {
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 300px));
   gap: 1rem;
+  justify-content: start;
 }
 
 .trip-card {
@@ -3682,7 +3650,7 @@ textarea:focus-visible,
 }
 
 .trip-card-image {
-  height: 176px;
+  height: 220px;
   background:
     linear-gradient(135deg, rgba(23, 68, 63, 0.9), rgba(176, 137, 82, 0.78)),
     url("https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=80") center/cover;
@@ -5421,6 +5389,10 @@ label {
 
 .dashboard-title-row {
   margin-bottom: 2rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
 .trip-card {
@@ -5443,9 +5415,13 @@ label {
 
 .trip-card-image {
   position: relative;
-  height: 180px;
-  background: #f1f5f9;
+  height: 220px;
+  background:
+    linear-gradient(135deg, rgba(23, 68, 63, 0.85), rgba(176, 137, 82, 0.75)),
+    url("https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=80") center/cover;
   overflow: hidden;
+  background-size: cover;
+  background-position: center;
 }
 
 .trip-card-image img {

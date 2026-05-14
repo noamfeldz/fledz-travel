@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "predev": "npx kill-port 4173",
-    "dev": "vite",
+    "dev": "concurrently \"vite\" \"cd backend && node --watch server.js\" --names \"frontend,backend\" --prefix-colors \"cyan,yellow\"",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "maps:check": "node scripts/check-google-maps-key.mjs"
@@ -23,6 +23,7 @@
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.1",
     "typescript": "~5.8.3",
     "vite": "^7.0.0"
   }
