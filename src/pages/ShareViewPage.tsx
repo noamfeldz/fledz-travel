@@ -6,7 +6,8 @@ import { useAuth } from "../context/AuthContext";
 type TripSnapshot = {
   trip: { id: string; name: string; destination: string; start_date: string | null; end_date: string | null };
   places: unknown[];
-  hotel: unknown;
+  hotels: unknown[];
+  hotel?: unknown; // legacy compat
   flights: unknown[];
   plans: unknown[];
   tripConfig: unknown;
@@ -61,7 +62,8 @@ export default function ShareViewPage() {
   if (error) return <div className="share-error" dir="rtl">❌ {error}</div>;
   if (!snapshot) return null;
 
-  const { trip, places, hotel, flights, plans } = snapshot;
+  const { trip, places, hotel, hotels, flights, plans } = snapshot;
+  const hotelCount = Array.isArray(hotels) ? hotels.length : (hotel ? 1 : 0);
   const placeList = places as Array<{ name: string; type: string; notes?: string; priority?: number }>;
   const planCount = (plans as unknown[]).length;
 
@@ -109,10 +111,10 @@ export default function ShareViewPage() {
             <span className="share-stat-num">{planCount}</span>
             <span>ימים</span>
           </div>
-          {!!hotel && (
+          {hotelCount > 0 && (
             <div className="share-stat">
-              <span className="share-stat-num">✓</span>
-              <span>מלון</span>
+              <span className="share-stat-num">{hotelCount}</span>
+              <span>מלון{hotelCount > 1 ? "ות" : ""}</span>
             </div>
           )}
         </div>

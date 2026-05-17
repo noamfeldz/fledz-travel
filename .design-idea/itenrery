@@ -1,0 +1,404 @@
+import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  Compass, ArrowRight, Globe, Sparkles, Map as MapIcon, 
+  Calendar, MessageSquare, Layout, Plus, 
+  ChevronDown, Search, Camera, Zap, Plane, Menu, X,
+  MapPin, Clock, Star, Share2, Settings, MoreHorizontal,
+  Navigation, Train, Footprints, Info, Sun, Sunset, Moon
+} from 'lucide-react';
+
+const App = () => {
+  const [currentPage, setCurrentPage] = useState('itinerary'); 
+  const [activeDay, setActiveDay] = useState(0);
+
+  // Mock Data with Day Segments
+  const itineraryData = [
+    {
+      day: "יום 1",
+      date: "08 יולי",
+      title: "נחיתה והתאקלמות",
+      mapMarkers: [
+        { id: 1, x: '45%', y: '60%', label: 'STN Airport' },
+        { id: 2, x: '52%', y: '45%', label: 'Camden Town' },
+        { id: 3, x: '55%', y: '42%', label: 'Hans & Gretel' }
+      ],
+      segments: [
+        {
+          label: "ערב",
+          icon: Moon,
+          color: "blue",
+          items: [
+            { 
+              id: 't1', 
+              type: 'flight', 
+              time: '17:10', 
+              title: 'London Stansted', 
+              flightNo: 'IZ912', 
+              origin: 'TLV', 
+              dest: 'STN',
+              terminal: 'T3',
+              gate: 'A12'
+            },
+            { type: 'transport', mode: 'train', duration: '45 min', detail: 'Stansted Express to Liverpool St.' },
+            { 
+              id: 't2', 
+              type: 'place', 
+              time: '19:30', 
+              title: 'Camden Town', 
+              img: 'https://images.unsplash.com/photo-1517713982677-4b66332f98de',
+              desc: 'סיבוב שוק ערב ואוכל רחוב'
+            },
+            { type: 'transport', mode: 'walk', duration: '12 min', detail: 'הליכה דרך התעלה' },
+            { 
+              id: 't3', 
+              type: 'place', 
+              time: '21:00', 
+              title: 'Hans & Gretel', 
+              img: 'https://images.unsplash.com/photo-1518133910546-b6c2fb7d79e3',
+              desc: 'קינוח מושחת לסגירת הערב'
+            }
+          ]
+        }
+      ]
+    },
+    {
+      day: "יום 2",
+      date: "09 יולי",
+      title: "תרבות ואמנות",
+      mapMarkers: [
+        { id: 4, x: '40%', y: '55%', label: 'Science Museum' },
+        { id: 5, x: '60%', y: '50%', label: 'Borough Market' }
+      ],
+      segments: [
+        {
+          label: "בוקר",
+          icon: Sun,
+          color: "orange",
+          items: [
+            { 
+              id: 't4', 
+              type: 'place', 
+              time: '10:00', 
+              title: 'Science Museum', 
+              img: 'https://images.unsplash.com/photo-1558403194-611308249627',
+              desc: 'תערוכת החלל החדשה'
+            },
+            { type: 'transport', mode: 'metro', duration: '20 min', detail: 'Piccadilly Line' }
+          ]
+        },
+        {
+          label: "צהריים",
+          icon: Sunset,
+          color: "amber",
+          items: [
+            { 
+              id: 't5', 
+              type: 'place', 
+              time: '13:00', 
+              title: 'Borough Market', 
+              img: 'https://images.unsplash.com/photo-1533777419517-3e4017e2e15a',
+              desc: 'ארוחת צהריים בשוק'
+            }
+          ]
+        }
+      ]
+    }
+  ];
+
+  const MobileNav = () => (
+    <div className="fixed bottom-0 left-0 w-full bg-black/80 backdrop-blur-2xl border-t border-white/10 z-[100] flex justify-around items-center py-4 px-2 md:hidden">
+      {[
+        { id: 'locations', icon: MapPin, label: 'מקומות' },
+        { id: 'itinerary', icon: Calendar, label: 'ימים' },
+        { id: 'landing', icon: Globe, label: 'מפה' },
+        { id: 'ai', icon: MessageSquare, label: 'AI' },
+        { id: 'settings', icon: Settings, label: 'הגדרות' }
+      ].map((tab) => (
+        <button 
+          key={tab.id}
+          onClick={() => setCurrentPage(tab.id)}
+          className={`flex flex-col items-center gap-1 transition-all ${currentPage === tab.id ? 'text-orange-500' : 'text-zinc-500'}`}
+        >
+          <tab.icon size={20} />
+          <span className="text-[10px] font-bold">{tab.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+
+  const MapComponent = ({ markers }) => (
+    <div className="relative w-full h-full bg-[#121212] overflow-hidden rounded-[3rem] border border-white/5">
+      {/* Background Map Image with Overlay */}
+      <img 
+        src="https://images.unsplash.com/photo-1524334228333-0f6db392f8a1?auto=format&fit=crop&q=80&w=1200" 
+        className="w-full h-full object-cover opacity-20 grayscale scale-110" 
+        alt="London Map Background"
+      />
+      <div className="absolute inset-0 bg-gradient-to-t from-[#020202] via-transparent to-transparent opacity-60" />
+      
+      {/* SVG Routes Layer */}
+      <svg className="absolute inset-0 w-full h-full pointer-events-none">
+        <motion.path
+          initial={{ pathLength: 0, opacity: 0 }}
+          animate={{ pathLength: 1, opacity: 0.3 }}
+          transition={{ duration: 2, ease: "easeInOut" }}
+          d={`M ${markers.map(m => `${m.x} ${m.y}`).join(' L ')}`}
+          stroke="url(#grad)"
+          strokeWidth="2"
+          fill="none"
+          strokeDasharray="8 8"
+        />
+        <defs>
+          <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#f97316" />
+            <stop offset="100%" stopColor="#ea580c" />
+          </linearGradient>
+        </defs>
+      </svg>
+
+      {/* Markers */}
+      {markers.map((marker, idx) => (
+        <motion.div
+          key={marker.id}
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: 0.5 + idx * 0.2, type: 'spring' }}
+          className="absolute"
+          style={{ left: marker.x, top: marker.y }}
+        >
+          <div className="relative -translate-x-1/2 -translate-y-1/2 group">
+            {/* Pulse Effect */}
+            <div className="absolute inset-0 w-full h-full bg-orange-500 rounded-full animate-ping opacity-20" />
+            
+            {/* Pin */}
+            <div className="relative w-4 h-4 bg-orange-500 rounded-full border-2 border-white shadow-lg shadow-orange-500/50 flex items-center justify-center">
+              <div className="w-1.5 h-1.5 bg-white rounded-full" />
+            </div>
+
+            {/* Label */}
+            <div className="absolute top-6 left-1/2 -translate-x-1/2 whitespace-nowrap bg-black/80 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              <span className="text-[10px] font-black uppercase tracking-widest text-white">{marker.label}</span>
+            </div>
+            
+            {/* Index Pin */}
+            <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-white text-black text-[9px] font-black w-5 h-5 rounded-lg flex items-center justify-center border border-black shadow-md">
+              {idx + 1}
+            </div>
+          </div>
+        </motion.div>
+      ))}
+
+      {/* Map UI Elements */}
+      <div className="absolute bottom-8 right-8 flex flex-col gap-3">
+        <div className="bg-black/60 backdrop-blur-xl p-3 rounded-2xl border border-white/5 text-white/60 hover:text-white transition-colors cursor-pointer">
+          <Plus size={18} />
+        </div>
+        <div className="bg-black/60 backdrop-blur-xl p-3 rounded-2xl border border-white/5 text-white/60 hover:text-white transition-colors cursor-pointer">
+          <X size={18} className="rotate-45" />
+        </div>
+      </div>
+
+      <div className="absolute top-8 left-8 glass p-4 rounded-2xl flex items-center gap-3">
+        <div className="w-3 h-3 rounded-full bg-orange-500 animate-pulse" />
+        <span className="text-[10px] font-black uppercase tracking-widest">יום {activeDay + 1} • {markers.length} נקודות עניין</span>
+      </div>
+    </div>
+  );
+
+  const ItineraryContent = () => (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="pt-24 md:pt-32 pb-40 px-4 md:px-10 max-w-7xl mx-auto min-h-screen">
+      
+      {/* Horizontal Day Selector */}
+      <div className="flex gap-4 mb-12 overflow-x-auto no-scrollbar py-2 sticky top-24 z-40 bg-[#020202]/50 backdrop-blur-md -mx-4 px-4">
+        {itineraryData.map((day, idx) => (
+          <button 
+            key={idx}
+            onClick={() => setActiveDay(idx)}
+            className={`flex flex-col items-center min-w-[80px] p-4 rounded-3xl transition-all border ${activeDay === idx ? 'bg-orange-500 border-orange-500 text-white shadow-lg shadow-orange-600/20' : 'bg-zinc-900/50 border-white/5 text-zinc-500'}`}
+          >
+            <span className="text-[10px] font-black uppercase tracking-tighter opacity-70">{day.day}</span>
+            <span className="text-xl font-black font-heebo">{day.date.split(' ')[0]}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="grid lg:grid-cols-12 gap-12">
+        
+        {/* Main Timeline */}
+        <div className="lg:col-span-7 space-y-12">
+          <div className="mb-10">
+            <h2 className="text-5xl font-black font-heebo tracking-tighter">{itineraryData[activeDay].title}</h2>
+            <div className="flex items-center gap-2 text-zinc-500 mt-2 font-bold uppercase text-[10px] tracking-widest">
+              <Calendar size={12} /> {itineraryData[activeDay].day} • {itineraryData[activeDay].date} • LONDON
+            </div>
+          </div>
+
+          <div className="relative border-r-2 border-white/5 pr-8 space-y-16">
+            <AnimatePresence mode="wait">
+              <motion.div 
+                key={activeDay}
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-16"
+              >
+                {itineraryData[activeDay].segments.map((segment, segIdx) => (
+                  <div key={segIdx} className="space-y-10 relative">
+                    <div className="flex items-center gap-4 -mr-12 mb-8">
+                      <div className={`w-10 h-10 rounded-2xl flex items-center justify-center bg-zinc-900 border border-white/5 shadow-xl`}>
+                        <segment.icon size={20} className={segment.color === 'orange' ? 'text-orange-400' : segment.color === 'amber' ? 'text-amber-400' : 'text-blue-400'} />
+                      </div>
+                      <h3 className="text-2xl font-black font-heebo uppercase tracking-tighter opacity-90">{segment.label}</h3>
+                      <div className="flex-1 h-[1px] bg-white/5 ml-4" />
+                    </div>
+
+                    <div className="space-y-10">
+                      {segment.items.map((item, i) => {
+                        if (item.type === 'flight') return (
+                          <div key={i} className="relative">
+                            <div className="absolute -right-[37px] top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.5)] z-10" />
+                            <div className="bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-[2rem] overflow-hidden border border-white/10 shadow-2xl relative">
+                              <div className="absolute top-0 right-0 p-4 bg-orange-600 text-white text-[10px] font-black uppercase rounded-bl-2xl">Boarding Pass</div>
+                              <div className="p-8">
+                                <div className="flex justify-between items-center mb-8">
+                                  <div className="text-left">
+                                    <div className="text-4xl font-black font-heebo">{item.origin}</div>
+                                    <div className="text-[10px] opacity-50 font-bold uppercase tracking-widest">Tel Aviv</div>
+                                  </div>
+                                  <div className="flex flex-col items-center flex-1 px-4">
+                                    <div className="w-full border-t border-dashed border-white/20 relative">
+                                      <Plane size={20} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-orange-500 -rotate-45" />
+                                    </div>
+                                    <div className="text-[9px] font-black mt-4 text-zinc-500 uppercase">{item.flightNo}</div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-4xl font-black font-heebo">{item.dest}</div>
+                                    <div className="text-[10px] opacity-50 font-bold uppercase tracking-widest">London</div>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-4 pt-6 border-t border-white/5">
+                                  <div>
+                                    <div className="text-[9px] opacity-40 uppercase font-black">Gate</div>
+                                    <div className="font-bold">{item.gate}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[9px] opacity-40 uppercase font-black">Terminal</div>
+                                    <div className="font-bold">{item.terminal}</div>
+                                  </div>
+                                  <div className="text-left">
+                                    <div className="text-[9px] opacity-40 uppercase font-black">Arrival</div>
+                                    <div className="font-bold text-orange-500">{item.time}</div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+
+                        if (item.type === 'transport') return (
+                          <div key={i} className="flex items-center gap-4 py-2 opacity-40 hover:opacity-100 transition-opacity">
+                            <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center">
+                              {item.mode === 'train' && <Train size={18} />}
+                              {item.mode === 'walk' && <Footprints size={18} />}
+                              {item.mode === 'metro' && <Navigation size={18} />}
+                            </div>
+                            <div className="text-xs font-bold tracking-tight">
+                              {item.detail} <span className="mx-2">•</span> <span className="text-orange-500">{item.duration}</span>
+                            </div>
+                          </div>
+                        );
+
+                        return (
+                          <div key={i} className="relative group">
+                            <div className="absolute -right-[37px] top-8 w-4 h-4 rounded-full bg-zinc-800 border-2 border-zinc-700 group-hover:bg-orange-500 group-hover:border-orange-500 transition-colors z-10" />
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 bg-zinc-900/30 rounded-[2.5rem] p-6 border border-white/5 hover:border-orange-500/30 transition-all cursor-pointer">
+                              <div className="md:col-span-4 aspect-square rounded-2xl overflow-hidden shadow-xl">
+                                <img src={item.img} className="w-full h-full object-cover" alt={item.title} />
+                              </div>
+                              <div className="md:col-span-8 flex flex-col justify-center">
+                                <div className="flex justify-between items-start mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <Clock size={14} className="text-orange-500" />
+                                    <span className="text-orange-500 font-black font-heebo text-xl">{item.time}</span>
+                                  </div>
+                                  <div className="flex gap-1">
+                                     <div className="p-2 bg-white/5 rounded-lg"><Info size={14} className="text-zinc-500" /></div>
+                                     <div className="p-2 bg-white/5 rounded-lg"><Share2 size={14} className="text-zinc-500" /></div>
+                                  </div>
+                                </div>
+                                <h4 className="text-3xl font-black font-heebo mb-2">{item.title}</h4>
+                                <p className="text-zinc-500 text-sm font-medium leading-relaxed">{item.desc}</p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </div>
+
+        {/* Floating Map Container */}
+        <div className="lg:col-span-5 hidden lg:block">
+          <div className="sticky top-40 space-y-6">
+            <div className="h-[600px] shadow-2xl relative">
+              <MapComponent markers={itineraryData[activeDay].mapMarkers} />
+            </div>
+
+            <div className="glass rounded-3xl p-8 border border-orange-500/20">
+              <div className="flex items-center gap-3 mb-4 text-orange-500">
+                <Sparkles size={20} />
+                <span className="text-xs font-black uppercase tracking-widest">AI Journey Summary</span>
+              </div>
+              <p className="text-sm text-zinc-400 leading-relaxed font-medium">
+                "המסלול של יום {activeDay + 1} מסודר בצורה אופטימלית כדי לחסוך נסיעות מיותרות. הנקודות מסודרות מצפון לדרום."
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+
+  return (
+    <div className="min-h-screen bg-[#020202] text-white font-['Assistant'] selection:bg-orange-500 overflow-x-hidden" dir="rtl">
+      <style dangerouslySetInnerHTML={{ __html: `
+        @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700;800&family=Heebo:wght@800;900&display=swap');
+        .font-heebo { font-family: 'Heebo', sans-serif; }
+        .glass { background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .gradient-orange { background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); }
+      `}} />
+
+      {/* Nav */}
+      <nav className="fixed top-0 w-full z-[100] px-6 md:px-10 py-6 md:py-8 flex justify-between items-center mix-blend-difference">
+        <div className="flex items-center gap-4 cursor-pointer" onClick={() => setCurrentPage('landing')}>
+          <motion.div whileHover={{ scale: 1.1, rotate: 15 }} className="w-10 h-10 md:w-12 md:h-12 gradient-orange rounded-2xl flex items-center justify-center">
+            <Plane size={24} className="text-white -rotate-45" />
+          </motion.div>
+          <span className="text-2xl md:text-3xl font-black font-heebo tracking-tighter">TRAVLER</span>
+        </div>
+        
+        <div className="hidden md:flex gap-10 text-[10px] font-black uppercase tracking-[0.3em]">
+          <button onClick={() => setCurrentPage('locations')} className="hover:text-orange-500 transition-colors">Locations</button>
+          <button onClick={() => setCurrentPage('itinerary')} className="text-orange-500">Itinerary</button>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-zinc-800 overflow-hidden border border-white/10">
+            <img src="https://i.pravatar.cc/100?img=12" alt="Profile" />
+          </div>
+        </div>
+      </nav>
+
+      <ItineraryContent />
+      <MobileNav />
+    </div>
+  );
+};
+
+export default App;

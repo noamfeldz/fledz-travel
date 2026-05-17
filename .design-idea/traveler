@@ -1,0 +1,336 @@
+import React, { useState, useRef } from 'react';
+import { motion, useScroll, useTransform, useSpring, AnimatePresence } from 'framer-motion';
+import { 
+  Compass, ArrowRight, Globe, Sparkles, Map, 
+  Calendar, MessageSquare, Layout, Plus, 
+  ChevronDown, Search, Camera, Zap, Plane, Menu, X
+} from 'lucide-react';
+
+const App = () => {
+  const containerRef = useRef(null);
+  const { scrollYProgress } = useScroll();
+  const [activeTrip, setActiveTrip] = useState('Tokyo');
+  
+  const smoothProgress = useSpring(scrollYProgress, {
+    stiffness: 100,
+    damping: 30,
+    restDelta: 0.001
+  });
+
+  const heroScale = useTransform(smoothProgress, [0, 0.2], [1, 1.2]);
+  const heroOpacity = useTransform(smoothProgress, [0, 0.15], [1, 0]);
+  const dashboardY = useTransform(smoothProgress, [0.15, 0.4], [150, 0]);
+
+  const trips = {
+    'Tokyo': { img: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf', color: 'orange' },
+    'Iceland': { img: 'https://images.unsplash.com/photo-1476610182048-b716b8518aae', color: 'blue' },
+    'Paris': { img: 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34', color: 'emerald' }
+  };
+
+  return (
+    <div className="min-h-[400vh] bg-[#020202] text-white font-['Assistant'] selection:bg-orange-500 overflow-x-hidden" dir="rtl" ref={containerRef}>
+      <style dangerouslySetInnerHTML={{ __html: `
+        @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700;800&family=Heebo:wght@800;900&display=swap');
+        .font-heebo { font-family: 'Heebo', sans-serif; }
+        .glass { background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(25px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .text-outline { -webkit-text-stroke: 1px rgba(255,255,255,0.3); color: transparent; }
+        .neo-shadow { box-shadow: 0 0 40px rgba(0,0,0,0.5); }
+        .gradient-orange { background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); }
+      `}} />
+
+      {/* Navigation */}
+      <nav className="fixed top-0 w-full z-[100] px-10 py-8 flex justify-between items-center mix-blend-difference">
+        <div className="flex items-center gap-4">
+          <motion.div 
+            whileHover={{ scale: 1.1, rotate: 15 }}
+            className="w-12 h-12 gradient-orange rounded-2xl flex items-center justify-center shadow-lg shadow-orange-600/20"
+          >
+            <Plane size={24} className="text-white -rotate-45" />
+          </motion.div>
+          <span className="text-3xl font-black font-heebo tracking-tighter">TRAVLER</span>
+        </div>
+        
+        <div className="hidden md:flex gap-12 text-[11px] font-black uppercase tracking-[0.3em]">
+          {['Explore', 'My OS', 'AI Concierge', 'Pricing'].map(item => (
+            <a key={item} href="#" className="hover:text-orange-500 transition-colors">{item}</a>
+          ))}
+        </div>
+
+        <button className="bg-white text-black px-8 py-3 rounded-full font-black text-xs uppercase tracking-widest hover:bg-orange-500 hover:text-white transition-all">
+          הצטרפו לבטא
+        </button>
+      </nav>
+
+      {/* Hero Section */}
+      <section className="relative h-screen flex items-center justify-center overflow-hidden">
+        <motion.div 
+          style={{ scale: heroScale, opacity: heroOpacity }}
+          className="absolute inset-0 z-0"
+        >
+          <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-[#020202] z-10" />
+          <img 
+            src="https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&q=80&w=2000" 
+            alt="Hero Background" 
+            className="w-full h-full object-cover grayscale-[20%]"
+          />
+        </motion.div>
+
+        <div className="relative z-20 text-center px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1 }}
+          >
+            <span className="text-orange-500 font-black tracking-[0.5em] uppercase text-xs mb-8 block">
+              Automated Travel Intelligence
+            </span>
+            <h1 className="text-[15vw] md:text-[13vw] font-black font-heebo leading-[0.75] uppercase tracking-tighter italic">
+              Travler<br/>
+              <span className="text-outline">OS_01</span>
+            </h1>
+            <p className="mt-12 text-xl md:text-3xl font-light max-w-2xl mx-auto opacity-60 leading-relaxed">
+              המקום שבו ההשראה פוגשת ביצוע. תכנון, ניהול ותמיכה - הכל ב-OS אחד חכם.
+            </p>
+          </motion.div>
+        </div>
+
+        <motion.div 
+          animate={{ y: [0, 10, 0] }} transition={{ repeat: Infinity, duration: 2 }}
+          className="absolute bottom-12 left-1/2 -translate-x-1/2 opacity-30 cursor-pointer"
+        >
+          <ChevronDown size={40} />
+        </motion.div>
+      </section>
+
+      {/* The "Everything Hub" Section */}
+      <section className="py-40 relative">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="grid lg:grid-cols-2 gap-32 items-center">
+            <div className="space-y-12">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 text-orange-500 text-[10px] font-black uppercase tracking-widest">
+                <Sparkles size={14} /> Intelligence Layer
+              </div>
+              <h2 className="text-7xl font-black font-heebo leading-none tracking-tighter">
+                יותר מיומן,<br/>
+                <span className="text-orange-500 italic">זאת מערכת.</span>
+              </h2>
+              <p className="text-2xl text-zinc-400 font-light leading-relaxed">
+                Travler מרכז עבורך את כל חלקי הטיול: כרטיסי טיסה, הזמנות מלונות, המלצות AI ומסלולים מותאמים אישית - מסונכרנים לכל המכשירים שלך.
+              </p>
+              
+              <div className="space-y-6">
+                {[
+                  { title: "ייעוץ ותמיכה 24/7", desc: "ה-AI שלנו זמין לכל שינוי, המלצה או פתרון בעיות בזמן אמת." },
+                  { title: "ניהול מסמכים חכם", desc: "כל מה שצריך לטיול בתיקייה דיגיטלית אחת מאובטחת." }
+                ].map((item, i) => (
+                  <div key={i} className="flex gap-6 items-start">
+                    <div className="w-12 h-12 rounded-2xl bg-orange-600/10 flex items-center justify-center shrink-0">
+                      <Zap className="text-orange-500" size={24} />
+                    </div>
+                    <div>
+                      <h4 className="text-xl font-bold font-heebo mb-2">{item.title}</h4>
+                      <p className="text-zinc-500 text-sm leading-relaxed">{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              className="relative group"
+            >
+              <div className="absolute inset-0 bg-orange-600/20 blur-[120px] rounded-full group-hover:bg-orange-600/30 transition-all" />
+              <div className="relative aspect-square rounded-[4rem] overflow-hidden neo-shadow">
+                <img 
+                  src="https://images.unsplash.com/photo-1527631746610-bca00a040d60?auto=format&fit=crop&q=80&w=800" 
+                  className="w-full h-full object-cover"
+                  alt="Travler Concept"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
+                
+                {/* Floating UI Elements */}
+                <motion.div 
+                  animate={{ y: [0, -10, 0] }}
+                  transition={{ duration: 4, repeat: Infinity }}
+                  className="absolute top-10 right-10 glass p-6 rounded-3xl w-64 shadow-2xl"
+                >
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="text-[10px] font-black opacity-50 uppercase tracking-widest">Next Flight</span>
+                    <Plane size={14} className="text-orange-500" />
+                  </div>
+                  <div className="text-2xl font-black font-heebo">TLV → HND</div>
+                  <div className="text-[10px] mt-2 opacity-70">BOARDING IN 4H 20M</div>
+                </motion.div>
+              </div>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* The Dashboard Preview - The "Heart" of the Product */}
+      <section className="py-20">
+        <div className="max-w-[1400px] mx-auto px-6">
+          <motion.div 
+            style={{ y: dashboardY }}
+            className="glass rounded-[4rem] overflow-hidden border border-white/5 shadow-2xl"
+          >
+            <div className="grid lg:grid-cols-12 min-h-[850px]">
+              
+              {/* Sidebar Controls */}
+              <div className="lg:col-span-3 border-l border-white/5 bg-black/50 p-10 flex flex-col">
+                <h3 className="text-xs font-black text-zinc-600 uppercase tracking-[0.3em] mb-10">Active Journeys</h3>
+                <div className="space-y-4 flex-1">
+                  {Object.keys(trips).map(name => (
+                    <div 
+                      key={name}
+                      onClick={() => setActiveTrip(name)}
+                      className={`group flex items-center justify-between p-4 rounded-2xl cursor-pointer transition-all ${activeTrip === name ? 'bg-orange-600 text-white shadow-xl shadow-orange-600/20' : 'hover:bg-white/5 text-zinc-500 hover:text-white'}`}
+                    >
+                      <span className="font-bold font-heebo text-lg">{name}</span>
+                      <ArrowRight size={18} className={`transition-transform ${activeTrip === name ? 'translate-x-0' : '-translate-x-4 opacity-0 group-hover:opacity-100 group-hover:translate-x-0'}`} />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-auto p-6 bg-orange-600/10 rounded-[2rem] border border-orange-500/20">
+                  <div className="flex items-center gap-2 text-orange-500 mb-2">
+                    <Sparkles size={16} />
+                    <span className="text-[10px] font-black uppercase tracking-widest">AI Status</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed font-medium">המערכת ניתחה את מזג האוויר ב-{activeTrip} וממליצה על שינוי בלו"ז ביום ג'.</p>
+                </div>
+              </div>
+
+              {/* Main Content Area */}
+              <div className="lg:col-span-9 p-16 relative">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={activeTrip}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="grid lg:grid-cols-2 gap-16 h-full"
+                  >
+                    <div className="space-y-10">
+                      <div className="flex justify-between items-end">
+                        <div>
+                          <h2 className="text-6xl font-black font-heebo tracking-tighter italic">{activeTrip}</h2>
+                          <p className="text-zinc-500 uppercase text-xs font-bold tracking-widest mt-2">7 Days • Family Trip • Spring 2024</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        {[
+                          { time: "09:00", task: "Breakfast at Tsukiji", cat: "Food" },
+                          { time: "11:30", task: "TeamLab Borderless", cat: "Art" },
+                          { time: "15:00", task: "Shibuya Sky Sunset", cat: "Sightseeing" }
+                        ].map((item, i) => (
+                          <div key={i} className="flex items-center gap-6 p-6 bg-white/5 rounded-3xl border border-white/5 group hover:border-orange-500/30 transition-all cursor-pointer">
+                            <div className="text-orange-500 font-black text-xs font-heebo">{item.time}</div>
+                            <div className="font-bold flex-1">{item.task}</div>
+                            <div className="text-[10px] font-black text-zinc-600 uppercase border border-zinc-800 px-3 py-1 rounded-full">{item.cat}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <button className="w-full py-5 bg-white text-black rounded-3xl font-black text-sm uppercase tracking-widest hover:bg-orange-500 hover:text-white transition-all flex items-center justify-center gap-3">
+                        <Plus size={20} /> הוסף פריט חדש
+                      </button>
+                    </div>
+
+                    <div className="relative h-full flex flex-col gap-6">
+                      <div className="flex-1 rounded-[3rem] overflow-hidden relative shadow-2xl group">
+                        <img src={trips[activeTrip].img + "?auto=format&fit=crop&q=80&w=800"} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                        <div className="absolute inset-0 bg-black/20" />
+                        <div className="absolute bottom-8 right-8 flex gap-2">
+                          <button className="p-4 bg-white text-black rounded-2xl shadow-xl hover:bg-orange-500 hover:text-white transition-all"><Camera size={20} /></button>
+                          <button className="p-4 bg-black/60 backdrop-blur-xl text-white rounded-2xl shadow-xl hover:bg-orange-600 transition-all"><Map size={20} /></button>
+                        </div>
+                      </div>
+                      
+                      <div className="p-8 glass rounded-[2.5rem]">
+                        <h4 className="text-xl font-bold font-heebo mb-4 flex items-center gap-2">
+                          <MessageSquare className="text-orange-500" size={20} /> AI Advice
+                        </h4>
+                        <p className="text-sm text-zinc-400 leading-relaxed italic font-light">
+                          "ביום הזה צפוי גשם קל בצהריים. העברתי את הביקור במוזיאון לשעה 12:00 כדי שתישאר יבש. נשאר לך זמן לקינוח בשיבויה בערב."
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Final CTA */}
+      <section className="py-60 relative text-center">
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-orange-600/10 to-transparent" />
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          className="relative z-10 max-w-5xl mx-auto px-6"
+        >
+          <h2 className="text-[12vw] md:text-[9vw] font-black font-heebo leading-none tracking-tighter uppercase mb-12">
+            The world is <br/>
+            <span className="text-orange-500 italic">Calling_</span>
+          </h2>
+          <div className="flex flex-col md:flex-row gap-6 justify-center items-center">
+            <button className="bg-white text-black px-12 py-6 rounded-full font-black text-2xl font-heebo uppercase tracking-tighter hover:bg-orange-500 hover:text-white transition-all shadow-2xl">
+              מתחילים עכשיו
+            </button>
+            <button className="px-12 py-6 rounded-full font-black text-2xl font-heebo uppercase tracking-tighter border border-white/20 hover:bg-white/5 transition-all">
+              צפה בדמו
+            </button>
+          </div>
+        </motion.div>
+      </section>
+
+      {/* Footer */}
+      <footer className="py-20 px-10 border-t border-white/5">
+        <div className="max-w-7xl mx-auto grid md:grid-cols-4 gap-20">
+          <div className="col-span-2">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-10 h-10 gradient-orange rounded-xl flex items-center justify-center rotate-3">
+                <Plane size={20} className="text-white -rotate-45" />
+              </div>
+              <span className="text-2xl font-black font-heebo tracking-tighter">TRAVLER</span>
+            </div>
+            <p className="text-zinc-600 max-w-sm font-medium leading-relaxed">
+              מגדירים מחדש את הדרך שבה אנשים מתכננים וחווים את העולם. הצטרפו למהפכת ה-Travel OS.
+            </p>
+          </div>
+          
+          <div className="space-y-6">
+            <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-400">Social</h5>
+            <div className="flex flex-col gap-4 font-bold text-sm">
+              <a href="#" className="hover:text-orange-500 transition-colors">Instagram</a>
+              <a href="#" className="hover:text-orange-500 transition-colors">Twitter</a>
+              <a href="#" className="hover:text-orange-500 transition-colors">LinkedIn</a>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-400">Contact</h5>
+            <p className="font-bold text-sm">hello@travler.ai</p>
+            <p className="text-zinc-500 text-[10px] font-black uppercase tracking-widest">Available 24/7</p>
+          </div>
+        </div>
+        
+        <div className="max-w-7xl mx-auto mt-20 pt-10 border-t border-white/5 flex flex-col md:flex-row justify-between text-[10px] font-black uppercase tracking-[0.3em] text-zinc-800">
+          <span>© 2024 TRAVLER TECHNOLOGIES LTD.</span>
+          <div className="flex gap-10">
+            <a href="#">Privacy Policy</a>
+            <a href="#">Terms of Service</a>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+};
+
+export default App;

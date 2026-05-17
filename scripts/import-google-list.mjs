@@ -156,7 +156,7 @@ function toAppPlace(apiPlace, listItem) {
   return {
     id: apiPlace.id,
     name: apiPlace.displayName?.text ?? listItem.search,
-    shortDescription: 'נוסף מרשימת Google Maps',
+    shortDescription: '',
     address: apiPlace.formattedAddress ?? '',
     openingHours,
     type: listItem.type,

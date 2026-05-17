@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 const API = "/api";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(API + path, {
     headers: { "Content-Type": "application/json" },
@@ -25,13 +26,13 @@ export type ChatMessage = {
   session_id: string;
   role: "user" | "assistant";
   content: string;
-  meta?: { planData?: Record<string, unknown>; planPreview?: boolean; intentAction?: IntentAction } | null;
+  meta?: { planData?: Record<string, unknown>; planPreview?: boolean; intentAction?: IntentAction; intentCandidates?: IntentLookupCandidate[] } | null;
   created_at: string;
 };
 
 type TripContext = {
   places: unknown[];
-  hotel: unknown;
+  hotels: unknown[];
   dayPlans: unknown[];
   tripConfig: unknown;
   flights: unknown[];
@@ -45,10 +46,158 @@ export type AiPlanResult = {
   summary: string;
 };
 
-export type IntentAction = {
-  intent: 'info' | 'replan' | 'add_place' | 'set_time' | 'mark_visited' | 'edit_place' | 'reschedule';
-  params?: Record<string, unknown>;
+type TripPlaceSummary = {
+  id: string;
+  name: string;
+  address?: string;
 };
+
+type IntentLookupCandidate = {
+  id: string;
+  name: string;
+  address: string;
+  area?: string;
+  rating?: number;
+  openingHours?: string[];
+  imageUrl?: string;
+  googleMapsUrl?: string;
+  websiteUrl?: string;
+  draft: Record<string, unknown>;
+};
+
+type IntentLookupState =
+  | { status: "loading"; message: string }
+  | { status: "existing"; message: string; place: TripPlaceSummary }
+  | { status: "candidates"; message: string; candidates: IntentLookupCandidate[] }
+  | { status: "error"; message: string };
+
+type IntentType = "info" | "replan" | "add_place" | "set_time" | "mark_visited" | "edit_place" | "reschedule";
+type IntentStepId =
+  | "check_place_exists"
+  | "search_google_places"
+  | "add_place_if_missing"
+  | "save_place"
+  | "move_place_to_day"
+  | "pin_place_time"
+  | "open_flight_editor"
+  | "recompute_plan"
+  | "mark_place_visited"
+  | "update_place_field";
+
+export type IntentAction = {
+  intent: IntentType;
+  params?: Record<string, unknown>;
+  steps?: IntentStepId[];
+};
+
+const ACTIONABLE_INTENTS: IntentType[] = ["replan", "add_place", "set_time", "mark_visited", "edit_place", "reschedule"];
+const ALLOWED_STEP_IDS: IntentStepId[] = [
+  "check_place_exists",
+  "search_google_places",
+  "add_place_if_missing",
+  "save_place",
+  "move_place_to_day",
+  "pin_place_time",
+  "open_flight_editor",
+  "recompute_plan",
+  "mark_place_visited",
+  "update_place_field",
+];
+
+const DEFAULT_INTENT_STEPS: Record<Exclude<IntentType, "info">, IntentStepId[]> = {
+  replan: ["recompute_plan"],
+  add_place: ["search_google_places", "save_place"],
+  set_time: ["check_place_exists", "add_place_if_missing", "move_place_to_day", "pin_place_time"],
+  mark_visited: ["mark_place_visited"],
+  edit_place: ["update_place_field"],
+  reschedule: ["open_flight_editor", "recompute_plan"],
+};
+
+const STEP_LABELS: Record<IntentStepId, string> = {
+  check_place_exists: "בודק אם המקום כבר קיים ברשימה",
+  search_google_places: "מחפש את המקום דרך Google Places",
+  add_place_if_missing: "אם חסר, פותח הוספת מקום ושומר אותו",
+  save_place: "שומר את המקום עם הפרטים שנמשכו",
+  move_place_to_day: "משבץ או מעביר את המקום ליום המתאים",
+  pin_place_time: "מעדכן עיגון ליום ולשעה שנבחרו",
+  open_flight_editor: "פותח את מסך עדכון הטיסה או האילוץ",
+  recompute_plan: "מחשב מחדש תוכנית בהתאם לשינוי",
+  mark_place_visited: "מסמן את המקום כביקור",
+  update_place_field: "מעדכן את שדות המקום הרלוונטיים",
+};
+
+function normalizePlaceLookup(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/['’`"]/g, "")
+    .replace(/[.,/#!$%^&*;:{}=\-_~()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractAreaFromAddressComponents(components: Array<{ long_name: string; types: string[] }> | undefined) {
+  if (!components) return "";
+  const priorityTypes = ["locality", "sublocality", "sublocality_level_1", "neighborhood", "administrative_area_level_2", "administrative_area_level_1"];
+  for (const type of priorityTypes) {
+    const match = components.find((component) => component.types.includes(type));
+    if (match) return match.long_name;
+  }
+  return "";
+}
+
+function isIntentType(value: unknown): value is IntentType {
+  return typeof value === "string" && ["info", ...ACTIONABLE_INTENTS].includes(value);
+}
+
+function normalizeIntentSteps(intent: IntentType, steps: unknown): IntentStepId[] | undefined {
+  const candidates = Array.isArray(steps)
+    ? steps
+    : typeof steps === "string"
+    ? [steps]
+    : [];
+  const normalized = candidates
+    .map((step) => typeof step === "string" ? step.trim() : "")
+    .filter((step): step is IntentStepId => ALLOWED_STEP_IDS.includes(step as IntentStepId));
+  if (normalized.length) return Array.from(new Set(normalized));
+  return intent === "info" ? undefined : DEFAULT_INTENT_STEPS[intent];
+}
+
+function buildIntentAction(intent: unknown, params: unknown, steps?: unknown): IntentAction | undefined {
+  if (!isIntentType(intent) || intent === "info") return undefined;
+  return {
+    intent,
+    params: params && typeof params === "object" ? params as Record<string, unknown> : {},
+    steps: normalizeIntentSteps(intent, steps),
+  };
+}
+
+function normalizeMessageMeta(meta: unknown): ChatMessage["meta"] {
+  if (!meta || typeof meta !== "object") return null;
+  const rawMeta = meta as Record<string, unknown>;
+  const nestedIntentAction =
+    rawMeta.intentAction && typeof rawMeta.intentAction === "object"
+      ? rawMeta.intentAction as Record<string, unknown>
+      : null;
+  const intentAction = buildIntentAction(
+    nestedIntentAction?.intent ?? rawMeta.intent,
+    nestedIntentAction?.params ?? rawMeta.params,
+    nestedIntentAction?.steps ?? rawMeta.steps,
+  );
+
+  return {
+    planData: rawMeta.planData && typeof rawMeta.planData === "object" ? rawMeta.planData as Record<string, unknown> : undefined,
+    planPreview: rawMeta.planPreview === true,
+    intentAction,
+    intentCandidates: Array.isArray(rawMeta.intentCandidates) ? rawMeta.intentCandidates as IntentLookupCandidate[] : undefined,
+  };
+}
+
+function normalizeMessage(message: ChatMessage): ChatMessage {
+  return {
+    ...message,
+    meta: normalizeMessageMeta(message.meta),
+  };
+}
 
 type Props = {
   tripContext: TripContext;
@@ -70,9 +219,39 @@ function formatRelativeTime(dateStr: string) {
   return `לפני ${diffDays} ימים`;
 }
 
+function extractDisplayContent(content: string) {
+  const trimmed = content.trim();
+  const candidates = [
+    trimmed,
+    trimmed.startsWith('"reply"') ? `{${trimmed}}` : null,
+  ].filter(Boolean) as string[];
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      let parsed: unknown = JSON.parse(candidate);
+      if (typeof parsed === "string") parsed = JSON.parse(parsed);
+      if (parsed && typeof parsed === "object" && "reply" in parsed) {
+        const reply = (parsed as { reply?: unknown }).reply;
+        if (typeof reply === "string") return reply;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return content;
+}
+
 function renderMessageContent(content: string, meta?: ChatMessage["meta"]) {
+  const displayContent = extractDisplayContent(content);
   // Simple markdown-ish rendering: bold, newlines, bullet lists
-  const lines = content.split("\n");
+  const lines = displayContent.split("\n");
   return (
     <div className="chat-msg-text">
       {lines.map((line, i) => {
@@ -117,10 +296,14 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
   const [showSidebar, setShowSidebar] = useState(false);
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [editTitleValue, setEditTitleValue] = useState("");
+  const [pendingInitialSend, setPendingInitialSend] = useState(false);
+  const [intentLookups, setIntentLookups] = useState<Record<string, IntentLookupState>>({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const planTriggeredRef = useRef(false);
+  const googleMapsLoaderRef = useRef<Promise<void> | null>(null);
+  const activeLookupRef = useRef<Set<string>>(new Set());
 
   // Load sessions list
   const loadSessions = useCallback(async () => {
@@ -143,7 +326,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
       return;
     }
     apiFetch(`/chat/sessions/${activeSessionId}/messages`)
-      .then((data) => setMessages(data))
+      .then((data) => setMessages((data as ChatMessage[]).map(normalizeMessage)))
       .catch(() => setMessages([]));
   }, [activeSessionId]);
 
@@ -151,6 +334,187 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  const ensureGooglePlacesReady = useCallback(async () => {
+    if (!GOOGLE_MAPS_API_KEY) throw new Error("VITE_GOOGLE_MAPS_API_KEY לא מוגדר");
+    if (!googleMapsLoaderRef.current) {
+      googleMapsLoaderRef.current = new Promise<void>((resolve, reject) => {
+        if (window.google?.maps?.importLibrary) {
+          resolve();
+          return;
+        }
+        const existingScript = document.querySelector<HTMLScriptElement>('script[data-google-maps-js="true"]');
+        if (existingScript) {
+          existingScript.addEventListener("load", () => resolve(), { once: true });
+          existingScript.addEventListener("error", () => reject(new Error("script-load-failed")), { once: true });
+          return;
+        }
+        (window as Window & { __codexGoogleMapsInit?: () => void }).__codexGoogleMapsInit = () => resolve();
+        const script = document.createElement("script");
+        script.dataset.googleMapsJs = "true";
+        script.async = true;
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&loading=async&libraries=places&v=weekly&callback=__codexGoogleMapsInit`;
+        script.onerror = () => reject(new Error("script-load-failed"));
+        document.head.appendChild(script);
+      }).finally(() => {
+        delete (window as Window & { __codexGoogleMapsInit?: () => void }).__codexGoogleMapsInit;
+      });
+    }
+    await googleMapsLoaderRef.current;
+  }, []);
+
+  const searchIntentCandidates = useCallback(async (messageId: string, intentAction: IntentAction) => {
+    if (activeLookupRef.current.has(messageId)) return;
+    const params = intentAction.params ?? {};
+    const rawName = intentAction.intent === "set_time" ? params.placeName : params.name;
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    const query = typeof params.query === "string" && params.query.trim()
+      ? params.query.trim()
+      : [name, typeof params.area === "string" ? params.area.trim() : ""].filter(Boolean).join(", ");
+    if (!name && !query) return;
+
+    const places = (tripContext.places as Array<Record<string, unknown>>).map((place) => ({
+      id: String(place.id ?? ""),
+      name: String(place.name ?? ""),
+      address: typeof place.address === "string" ? place.address : "",
+    }));
+    const normalizedTarget = normalizePlaceLookup(name || query);
+    const existing = places.find((place) => {
+      const normalizedPlace = normalizePlaceLookup(place.name);
+      return normalizedPlace === normalizedTarget || normalizedPlace.includes(normalizedTarget) || normalizedTarget.includes(normalizedPlace);
+    });
+    if (existing) {
+      setIntentLookups((prev) => ({
+        ...prev,
+        [messageId]: {
+          status: "existing",
+          message: `בדקתי, והמקום כבר קיים אצלך ברשימה: ${existing.name}.`,
+          place: existing,
+        },
+      }));
+      return;
+    }
+
+    activeLookupRef.current.add(messageId);
+    setIntentLookups((prev) => ({
+      ...prev,
+      [messageId]: { status: "loading", message: `מחפש עכשיו את ${query || name} ב-Google Places...` },
+    }));
+
+    try {
+      await ensureGooglePlacesReady();
+      const google = window.google as any;
+      const placesLibrary = await google.maps.importLibrary("places");
+      const { Place, SearchByTextRankPreference } = placesLibrary as {
+        Place: { searchByText: (request: Record<string, unknown>) => Promise<{ places: any[] }> };
+        SearchByTextRankPreference?: { RELEVANCE?: string };
+      };
+      const { places: searchResults = [] } = await Place.searchByText({
+        textQuery: query || name,
+        fields: [
+          "id",
+          "displayName",
+          "formattedAddress",
+          "location",
+          "addressComponents",
+          "businessStatus",
+          "nationalPhoneNumber",
+          "websiteURI",
+          "googleMapsURI",
+          "regularOpeningHours",
+          "rating",
+          "photos",
+        ],
+        language: "he",
+        region: "GB",
+        maxResultCount: 3,
+        rankPreference: SearchByTextRankPreference?.RELEVANCE ?? "RELEVANCE",
+        locationBias: { center: { lat: 51.5074, lng: -0.1278 }, radius: 50000 },
+      });
+      const candidates: IntentLookupCandidate[] = searchResults.map((place: any) => {
+        const displayName = place.displayName?.toString?.() || place.displayName || name;
+        const formattedAddress = place.formattedAddress || "";
+        const latitude = place.location?.lat?.();
+        const longitude = place.location?.lng?.();
+        const area = extractAreaFromAddressComponents(place.addressComponents) || "";
+        const photoUrl =
+          place.photos?.[0]?.getURI?.({ maxWidth: 1200, maxHeight: 800 }) ||
+          place.photos?.[0]?.getUrl?.({ maxWidth: 1200, maxHeight: 800 }) ||
+          "";
+        return {
+          id: place.id || `${displayName}-${formattedAddress}`,
+          name: displayName,
+          address: formattedAddress,
+          area: area || undefined,
+          rating: typeof place.rating === "number" ? place.rating : undefined,
+          openingHours: place.regularOpeningHours?.weekdayDescriptions?.length ? place.regularOpeningHours.weekdayDescriptions : undefined,
+          imageUrl: photoUrl || undefined,
+          googleMapsUrl: place.googleMapsURI || undefined,
+          websiteUrl: place.websiteURI || undefined,
+          draft: {
+            name: displayName,
+            shortDescription: typeof params.shortDescription === "string" ? params.shortDescription : "נמשך מ-Google Places",
+            address: formattedAddress,
+            openingHours: place.regularOpeningHours?.weekdayDescriptions?.join(" | ") || "",
+            type: typeof params.type === "string" ? params.type : "אטרקציה",
+            area,
+            imageUrl: photoUrl,
+            sourceUrl: place.googleMapsURI || "",
+            websiteUrl: place.websiteURI || "",
+            phoneNumber: place.nationalPhoneNumber || "",
+            googleMapsUrl: place.googleMapsURI || "",
+            googlePlaceId: place.id || "",
+            businessStatus: place.businessStatus || "",
+            lat: Number.isFinite(latitude) ? String(Number(latitude.toFixed(6))) : "",
+            lng: Number.isFinite(longitude) ? String(Number(longitude.toFixed(6))) : "",
+            visitDurationMinutes: params.visitDurationMins ?? params.visitDurationMinutes ?? "",
+          },
+        };
+      });
+      setIntentLookups((prev) => ({
+        ...prev,
+        [messageId]: candidates.length
+          ? { status: "candidates", message: `מצאתי ${candidates.length} התאמות אפשריות ב-Google Places.`, candidates }
+          : { status: "error", message: "לא מצאתי התאמה ברורה ב-Google Places." },
+      }));
+      // Persist candidates to DB so refresh doesn't re-search
+      if (candidates.length && !messageId.startsWith("tmp-")) {
+        apiFetch(`/chat/messages/${messageId}/meta`, {
+          method: "PATCH",
+          body: JSON.stringify({ patch: { intentCandidates: candidates } }),
+        }).catch(() => {/* non-critical */});
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setIntentLookups((prev) => ({
+        ...prev,
+        [messageId]: { status: "error", message: `חיפוש Google Places נכשל: ${detail}` },
+      }));
+    } finally {
+      activeLookupRef.current.delete(messageId);
+    }
+  }, [ensureGooglePlacesReady, tripContext.places]);
+
+  useEffect(() => {
+    messages.forEach((message) => {
+      const intentAction = message.meta?.intentAction;
+      if (!intentAction || (intentAction.intent !== "add_place" && intentAction.intent !== "set_time")) return;
+      if (intentLookups[message.id]) return;
+      // If candidates were already saved in meta (from a previous search), use them directly
+      if (message.meta?.intentCandidates?.length) {
+        setIntentLookups((prev) => ({
+          ...prev,
+          [message.id]: {
+            status: "candidates",
+            message: `מצאתי ${message.meta!.intentCandidates!.length} התאמות אפשריות ב-Google Places.`,
+            candidates: message.meta!.intentCandidates!,
+          },
+        }));
+        return;
+      }
+      void searchIntentCandidates(message.id, intentAction);
+    });
+  }, [intentLookups, messages, searchIntentCandidates]);
 
   // Auto-trigger plan if requested
   useEffect(() => {
@@ -161,13 +525,17 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, sessions]);
 
-  // Creates a session in the DB and updates local state — does NOT navigate.
-  // Use this when you need a session ID before an async operation completes.
-  const createSessionSilent = async (title = "שיחה חדשה"): Promise<ChatSession> => {
-    const session: ChatSession = await apiFetch("/chat/sessions", {
+  const createSessionRecord = async (title = "שיחה חדשה"): Promise<ChatSession> => {
+    return apiFetch("/chat/sessions", {
       method: "POST",
       body: JSON.stringify({ title }),
     });
+  };
+
+  // Creates a session in the DB and updates local state — does NOT navigate.
+  // Use this when you need a session ID before an async operation completes.
+  const createSessionSilent = async (title = "שיחה חדשה"): Promise<ChatSession> => {
+    const session = await createSessionRecord(title);
     setSessions((prev) => [session, ...prev]);
     setActiveSessionId(session.id);
     setMessages([]);
@@ -226,13 +594,14 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
     const msg = (messageText ?? input).trim();
     if (!msg || loading) return;
     setInput("");
+    if (!messages.length) setPendingInitialSend(true);
 
     // If no session yet, create one silently so the component doesn't remount
     // mid-send (navigate happens after the response is persisted).
     let sessionId = activeSessionId;
     let isNewSession = false;
     if (!sessionId) {
-      const session = await createSessionSilent();
+      const session = await createSessionRecord();
       sessionId = session.id;
       isNewSession = true;
     }
@@ -245,6 +614,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUserMsg]);
+    setPendingInitialSend(false);
     setLoading(true);
 
     try {
@@ -258,12 +628,9 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
           sessionId,
           ...tripContext,
         }),
-      }) as { reply: string; intent?: string; params?: Record<string, unknown> };
+      }) as { reply: string; intent?: string; params?: Record<string, unknown>; steps?: string[] };
 
-      const intentAction: IntentAction | undefined =
-        result.intent && result.intent !== 'info'
-          ? { intent: result.intent as IntentAction['intent'], params: result.params ?? {} }
-          : undefined;
+      const intentAction = buildIntentAction(result.intent, result.params, result.steps);
 
       const assistantMsg: ChatMessage = {
         id: `tmp-${Date.now()}-a`,
@@ -281,6 +648,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
       // Navigate to the session URL after messages are persisted in DB,
       // so if the component remounts it can load them correctly.
       if (isNewSession) {
+        setActiveSessionId(sessionId);
         navigate(`/${slug}/chat/${sessionId}`, { replace: true });
       }
     } catch (e) {
@@ -292,11 +660,8 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errMsg]);
-      // Still navigate so the session is bookmarkable
-      if (isNewSession) {
-        navigate(`/${slug}/chat/${sessionId}`, { replace: true });
-      }
     } finally {
+      setPendingInitialSend(false);
       setLoading(false);
     }
   };
@@ -469,6 +834,244 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
     }
   };
 
+  const renderIntentLookup = (messageId: string, intentAction: IntentAction) => {
+    const lookup = intentLookups[messageId];
+    const params = intentAction.params ?? {};
+    if (!lookup) return null;
+    if (lookup.status === "loading" || lookup.status === "error") {
+      return <p className={`chat-intent-lookup ${lookup.status}`}>{lookup.message}</p>;
+    }
+    if (lookup.status === "existing") {
+      return (
+        <div className="chat-intent-results">
+          <div className="chat-intent-result-card existing">
+            <strong className="chat-intent-result-title">המקום כבר קיים ברשימה שלך</strong>
+            <p className="chat-intent-result-address">{lookup.place.name}</p>
+            {lookup.place.address && <p className="chat-intent-result-address">{lookup.place.address}</p>}
+            <div className="chat-intent-result-actions">
+              {intentAction.intent === "set_time" ? (
+                <button type="button" className="chat-intent-btn chat-intent-btn-primary" onClick={() => onAction?.("set_time", { ...params, placeName: lookup.place.name })}>
+                  עגן את המקום הזה
+                </button>
+              ) : (
+                <button type="button" className="chat-intent-btn" onClick={() => navigate(`/${slug}/places/${encodeURIComponent(lookup.place.id)}`)}>
+                  פתח מקום קיים
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="chat-intent-results">
+        <p className="chat-intent-lookup success">{lookup.message}</p>
+        {lookup.candidates.map((candidate) => (
+          <article key={candidate.id} className="chat-intent-result-card">
+            {candidate.imageUrl && <img src={candidate.imageUrl} alt={candidate.name} className="chat-intent-result-image" />}
+            <div className="chat-intent-result-body">
+              <strong className="chat-intent-result-title">{candidate.name}</strong>
+              <p className="chat-intent-result-address">{candidate.address}</p>
+              {candidate.area && <span className="chat-intent-result-tag">{candidate.area}</span>}
+            </div>
+            <div className="chat-intent-result-actions">
+              <button
+                type="button"
+                className="chat-intent-btn chat-intent-btn-primary"
+                onClick={() => onAction?.(intentAction.intent === "set_time" ? "set_time_confirm" : "add_place_confirm", { ...params, candidateDraft: candidate.draft })}
+              >
+                {intentAction.intent === "set_time" ? "זה המקום, הוסף ועגן" : "זה המקום, הוסף"}
+              </button>
+              {candidate.googleMapsUrl && (
+                <a className="chat-intent-result-link" href={candidate.googleMapsUrl} target="_blank" rel="noreferrer">
+                  🗺 פתח בגוגל מפות
+                </a>
+              )}
+              {candidate.websiteUrl && (
+                <a className="chat-intent-result-link" href={candidate.websiteUrl} target="_blank" rel="noreferrer">
+                  🌐 פתח אתר
+                </a>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    );
+  };
+
+  const shouldShowManualFallback = (messageId: string, intentAction: IntentAction) => {
+    const lookup = intentLookups[messageId];
+    if (!lookup) return false;
+    return lookup.status === "error";
+  };
+
+  const renderIntentPanel = (messageId: string, intentAction: IntentAction) => {
+    const params = intentAction.params ?? {};
+    const steps = intentAction.steps ?? [];
+    const buttonClassName = (tone: "primary" | "secondary" = "secondary") =>
+      `chat-intent-btn${tone === "primary" ? " chat-intent-btn-primary" : ""}`;
+
+    const renderButton = (
+      label: string,
+      onClick: () => void,
+      tone: "primary" | "secondary" = "secondary",
+      disabled = false,
+    ) => (
+      <button type="button" className={buttonClassName(tone)} onClick={onClick} disabled={disabled}>
+        {label}
+      </button>
+    );
+    const renderSteps = (forMessageId?: string) => {
+      if (forMessageId) {
+        const lkp = intentLookups[forMessageId];
+        if (lkp && (lkp.status === "candidates" || lkp.status === "existing" || lkp.status === "error")) return null;
+      }
+      return steps.length ? (
+        <div className="chat-intent-steps">
+          <span className="chat-intent-steps-label">מה יקרה:</span>
+          {steps.map((step) => (
+            <div key={step} className="chat-intent-step">
+              {STEP_LABELS[step]}
+            </div>
+          ))}
+        </div>
+      ) : null;
+    };
+
+    switch (intentAction.intent) {
+      case "replan":
+        return (
+          <div className="chat-intent-panel">
+            <span className="chat-intent-kicker">פעולה מוצעת</span>
+            <strong className="chat-intent-title">נדרש תכנון מחדש</strong>
+            <p className="chat-intent-summary">
+              {typeof params.reason === "string" && params.reason.trim()
+                ? `זוהה שינוי חדש: ${params.reason}.`
+                : "זוהה שינוי שמשפיע על הלו״ז."} שום שינוי עוד לא בוצע.
+            </p>
+            {renderSteps(messageId)}
+            {renderIntentLookup(messageId, intentAction)}
+            <div className="chat-intent-actions">
+              {renderButton(planLoading ? "⏳ מחשב..." : "🔄 תכנן מחדש", handleTriggerPlan, "primary", planLoading)}
+            </div>
+          </div>
+        );
+      case "reschedule":
+        return (
+          <div className="chat-intent-panel">
+            <span className="chat-intent-kicker">פעולה מוצעת</span>
+            <strong className="chat-intent-title">צריך לעדכן שינוי בטיסה או בלו״ז</strong>
+            <p className="chat-intent-summary">
+              {typeof params.detail === "string" && params.detail.trim()
+                ? `${params.detail}.`
+                : "זוהה שינוי שמשפיע על הטיול."} העדכון עדיין לא בוצע.
+            </p>
+            {renderSteps(messageId)}
+            {renderIntentLookup(messageId, intentAction)}
+            <div className="chat-intent-actions">
+              {renderButton("✈️ פתח עדכון טיסה", () => onAction?.("reschedule", params))}
+              {renderButton(planLoading ? "⏳ מחשב..." : "🔄 תכנן מחדש", handleTriggerPlan, "primary", planLoading)}
+            </div>
+          </div>
+        );
+      case "mark_visited":
+        return (
+          <div className="chat-intent-panel">
+            <span className="chat-intent-kicker">פעולה מוצעת</span>
+            <strong className="chat-intent-title">אפשר לסמן מקום כביקור</strong>
+            <p className="chat-intent-summary">
+              {typeof params.placeName === "string" && params.placeName.trim()
+                ? `המקום שזוהה: ${params.placeName}.`
+                : "המודל זיהה שביקרתם במקום."} הסימון עדיין לא בוצע.
+            </p>
+            {renderSteps(messageId)}
+            {renderIntentLookup(messageId, intentAction)}
+            <div className="chat-intent-actions">
+              {renderButton("✅ סמן כביקור", () => onAction?.("mark_visited", params), "primary")}
+            </div>
+          </div>
+        );
+      case "add_place": {
+        const lookup = intentLookups[messageId];
+        const isLoading = !lookup || lookup.status === "loading";
+        const hasResults = lookup?.status === "candidates";
+        const placeName = typeof params.name === "string" && params.name.trim() ? params.name : null;
+        return (
+          <div className="chat-intent-panel">
+            <span className="chat-intent-kicker">פעולה מוצעת</span>
+            <strong className="chat-intent-title">
+              {isLoading
+                ? `🔍 מחפש את "${placeName ?? "המקום"}" ב-Google Places...`
+                : hasResults
+                ? `נמצאו תוצאות — בחר את המקום הנכון`
+                : `הוספת מקום`}
+            </strong>
+            {isLoading && (
+              <p className="chat-intent-summary">מחפש ב-Google Places, רק אחרי שתאשר תתבצע ההוספה.</p>
+            )}
+            {renderSteps(messageId)}
+            {renderIntentLookup(messageId, intentAction)}
+            {shouldShowManualFallback(messageId, intentAction) && (
+              <div className="chat-intent-actions">
+                {renderButton("➕ הוסף ידנית", () => onAction?.("add_place", params), "secondary")}
+              </div>
+            )}
+          </div>
+        );
+      }
+      case "set_time": {
+        const lookup = intentLookups[messageId];
+        const isLoading = !lookup || lookup.status === "loading";
+        const hasResults = lookup?.status === "candidates";
+        const placeName = typeof params.placeName === "string" && params.placeName.trim() ? params.placeName : null;
+        return (
+          <div className="chat-intent-panel">
+            <span className="chat-intent-kicker">פעולה מוצעת</span>
+            <strong className="chat-intent-title">
+              {isLoading
+                ? `🔍 מחפש את "${placeName ?? "המקום"}"...`
+                : hasResults
+                ? `נמצאו תוצאות — בחר ועגן`
+                : `עיגון מקום לזמן`}
+            </strong>
+            {isLoading && (
+              <p className="chat-intent-summary">
+                {placeName ? `${placeName}${typeof params.dayTitle === "string" ? `, ${params.dayTitle}` : ""}${typeof params.time === "string" ? ` בשעה ${params.time}` : ""}.` : ""}
+                {" "}מחפש ב-Google Places, ורק אחרי אישור תתבצע ההוספה.
+              </p>
+            )}
+            {renderSteps(messageId)}
+            {renderIntentLookup(messageId, intentAction)}
+            {shouldShowManualFallback(messageId, intentAction) && (
+              <div className="chat-intent-actions">
+                {renderButton("📌 פתח טיפול ידני", () => onAction?.("set_time", params), "secondary")}
+              </div>
+            )}
+          </div>
+        );
+      }
+      case "edit_place":
+        return (
+          <div className="chat-intent-panel">
+            <span className="chat-intent-kicker">פעולה מוצעת</span>
+            <strong className="chat-intent-title">אפשר לעדכן פרטי מקום</strong>
+            <p className="chat-intent-summary">
+              {typeof params.placeName === "string" && params.placeName.trim()
+                ? `המקום: ${params.placeName}${typeof params.field === "string" ? `, שדה: ${params.field}` : ""}.`
+                : "המודל זיהה בקשה לעריכת מקום."} העדכון עדיין לא בוצע.
+            </p>
+            {renderSteps(messageId)}
+            {renderIntentLookup(messageId, intentAction)}
+            <div className="chat-intent-actions">
+              {renderButton("✏️ עדכן מקום", () => onAction?.("edit_place", params), "primary")}
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -485,6 +1088,12 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
   };
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
+  const quickSuggestions = [
+    "מה הכי מומלץ לבוקר הראשון?",
+    "איך לחלק את הימים בצורה הכי חכמה?",
+    "מה הזמן הטוב ביותר לבקר ב...",
+    "🤖 בנה לי תוכנית שבועית מיטבית לטיול",
+  ];
 
   return (
     <div className="chat-page">
@@ -500,7 +1109,9 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
       {/* Sessions sidebar */}
       <aside className={`chat-sidebar${showSidebar ? " open" : ""}`}>
         <div className="chat-sidebar-header">
-          <span className="chat-sidebar-title">שיחות</span>
+          <div className="chat-sidebar-header-copy">
+            <span className="chat-sidebar-title">שיחות</span>
+          </div>
           <button
             type="button"
             className="chat-new-btn"
@@ -511,6 +1122,16 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
             שיחה חדשה
+          </button>
+          <button
+            type="button"
+            className="chat-sidebar-close"
+            onClick={() => setShowSidebar(false)}
+            title="סגור"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
           </button>
         </div>
 
@@ -578,7 +1199,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
         <header className="chat-header">
           <button
             type="button"
-            className="chat-header-btn"
+            className="chat-header-btn chat-header-btn-icon"
             onClick={() => setShowSidebar((v) => !v)}
             title="שיחות"
           >
@@ -588,44 +1209,29 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
           </button>
           <div className="chat-header-title">
             <span className="chat-header-label">
-              {activeSession ? activeSession.title : "💬 צ'אט AI"}
+              {activeSession ? activeSession.title : "צ׳אט AI"}
             </span>
           </div>
-          <div className="chat-header-actions">
-            <button
-              type="button"
-              className="chat-header-btn plan-btn"
-              onClick={handleShowPlanPreview}
-              disabled={planLoading}
-              title="בנה תוכנית AI"
-            >
-              {planLoading ? "⏳" : "🤖"} תכנון AI
-            </button>
-            <button
-              type="button"
-              className="chat-header-btn"
-              onClick={() => navigate(location.pathname.replace(/\/chat.*$/, "/planner"))}
-              title="חזרה לתכנון"
-            >
-              ✕
-            </button>
-          </div>
+          <button
+            type="button"
+            className="chat-header-btn plan-btn"
+            onClick={handleShowPlanPreview}
+            disabled={planLoading}
+            title="בנה תוכנית AI"
+          >
+            {planLoading ? "⏳" : "🤖"}
+          </button>
         </header>
 
-        {/* Messages */}
-        <div className="chat-messages-area">
-          {!activeSessionId && !messages.length && (
+        <div className="chat-main-stage">
+          {/* Messages */}
+          <div className="chat-messages-area">
+            <div className="chat-messages-track">
+          {!messages.length && !pendingInitialSend && (
             <div className="chat-empty-state">
               <div className="chat-empty-icon">💬</div>
-              <h2>שאל/י כל שאלה על הטיול</h2>
-              <p>ה-AI מכיר את כל המקומות, הימים, הטיסות וההגדרות שלך.</p>
               <div className="chat-suggestions">
-                {[
-                  "מה הכי מומלץ לבוקר הראשון?",
-                  "איך לחלק את הימים בצורה הכי חכמה?",
-                  "מה הזמן הטוב ביותר לבקר ב...",
-                  "🤖 בנה לי תוכנית שבועית מיטבית לטיול",
-                ].map((suggestion) => (
+                {quickSuggestions.map((suggestion) => (
                   <button
                     key={suggestion}
                     type="button"
@@ -671,45 +1277,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
                     {planLoading ? '⏳ מחשב תוכנית...' : '🚀 כן, התחל תכנון!'}
                   </button>
                 )}
-                {msg.meta?.intentAction && msg.meta.intentAction.intent !== 'info' && (
-                  <div className="chat-intent-actions">
-                    {msg.meta.intentAction.intent === 'replan' && (
-                      <button type="button" className="chat-apply-plan-btn" onClick={handleTriggerPlan} disabled={planLoading}>
-                        {planLoading ? '⏳ מחשב...' : '🔄 תכנן מחדש'}
-                      </button>
-                    )}
-                    {msg.meta.intentAction.intent === 'reschedule' && (
-                      <>
-                        <button type="button" className="chat-intent-btn" onClick={() => onAction?.('reschedule', msg.meta!.intentAction!.params ?? {})}>
-                          ✈️ עדכן טיסה
-                        </button>
-                        <button type="button" className="chat-apply-plan-btn" onClick={handleTriggerPlan} disabled={planLoading}>
-                          {planLoading ? '⏳ מחשב...' : '🔄 תכנן מחדש'}
-                        </button>
-                      </>
-                    )}
-                    {msg.meta.intentAction.intent === 'mark_visited' && (
-                      <button type="button" className="chat-intent-btn" onClick={() => onAction?.('mark_visited', msg.meta!.intentAction!.params ?? {})}>
-                        ✅ סמן כביקור
-                      </button>
-                    )}
-                    {msg.meta.intentAction.intent === 'add_place' && (
-                      <button type="button" className="chat-intent-btn" onClick={() => onAction?.('add_place', msg.meta!.intentAction!.params ?? {})}>
-                        ➕ הוסף מקום
-                      </button>
-                    )}
-                    {msg.meta.intentAction.intent === 'set_time' && (
-                      <button type="button" className="chat-intent-btn" onClick={() => onAction?.('set_time', msg.meta!.intentAction!.params ?? {})}>
-                        📌 עגן זמן
-                      </button>
-                    )}
-                    {msg.meta.intentAction.intent === 'edit_place' && (
-                      <button type="button" className="chat-intent-btn" onClick={() => onAction?.('edit_place', msg.meta!.intentAction!.params ?? {})}>
-                        ✏️ ערוך מקום
-                      </button>
-                    )}
-                  </div>
-                )}
+                {msg.meta?.intentAction && renderIntentPanel(msg.id, msg.meta.intentAction)}
               </div>
             </div>
           ))}
@@ -726,6 +1294,8 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
           )}
 
           <div ref={messagesEndRef} />
+            </div>
+          </div>
         </div>
 
         {/* Input bar */}
@@ -737,7 +1307,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder="שאל/י שאלה על הטיול... (Enter לשליחה, Shift+Enter לשורה חדשה)"
+              placeholder="שאלו על מקומות, חלוקת ימים, נסיעות או בקשו תכנון מחדש"
               rows={1}
               disabled={loading}
             />
@@ -754,7 +1324,6 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
               </svg>
             </button>
           </div>
-          <p className="chat-input-hint">Shift+Enter לשורה חדשה • שיחות נשמרות אוטומטית</p>
         </div>
       </div>
     </div>

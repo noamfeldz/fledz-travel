@@ -1,0 +1,129 @@
+Travler AI OS - Design & Concept Style Guide
+
+This guide defines the visual identity, UI/UX principles, and technical styling for the Travler AI OS application. Use these rules to maintain consistency across new features and pages.
+
+1. Core Concept: "The Premium Traveler Terminal"
+
+The design aims to feel like a high-end, AI-powered OS specifically built for travel. It combines the sleekness of dark-mode software with the vibrant energy of global exploration.
+
+Keywords: Cyber-Luxury, Fluidity, Precision, Dark Mode, High-Contrast.
+
+Visual Vibe: Professional but adventurous. Dark backgrounds with "glowing" focal points (Orange accents).
+
+2. Color Palette
+
+The app uses a strict dark theme with a single primary accent color to guide user attention.
+
+Element
+
+Color Code
+
+Tailwind Class
+
+Usage
+
+Deep Background
+
+#020202
+
+bg-[#020202]
+
+Main page background
+
+Primary Accent
+
+#f97316
+
+text-orange-500
+
+Icons, active states, flight paths
+
+Accent Gradient
+
+#f97316 to #ea580c
+
+gradient-orange
+
+Primary buttons, brand logo
+
+Surface (L1)
+
+rgba(255,255,255,0.05)
+
+bg-white/5
+
+Cards, secondary buttons
+
+Surface (L2)
+
+rgba(18,18,18,1)
+
+bg-[#121212]
+
+Map background, heavy containers
+
+Glass
+
+rgba(0,0,0,0.7)
+
+glass
+
+Floating navs, context boxes
+
+3. Typography
+
+The app uses a mix of two fonts to separate "Content" from "Branding/Headers".
+
+Primary Font (Sans): Assistant (Hebrew & English). Clean, modern, highly readable.
+
+Secondary Font (Headings): Heebo (Weights: 800, 900). Used for large, impactful headers and titles.
+
+Styles:
+
+Headers: font-black tracking-tighter uppercase.
+
+Captions: text-[10px] font-black uppercase tracking-[0.3em] opacity-40.
+
+4. Visual Elements & UI Components
+
+Border Radii: All main containers (Cards, Images, Sections) use large, rounded corners: rounded-[2.5rem] or rounded-3xl.
+
+Borders: Thin, subtle borders to define structure: border border-white/10.
+
+Glassmorphism: Use backdrop-blur-25px for overlays to maintain a sense of depth.
+
+Timeline Logic: A vertical line (border-r-2 border-white/5) connects daily events, with glowing nodes (animate-ping) for active status.
+
+5. Iconography (Lucide-React)
+
+Style: Stroke icons, size={20} or size={24}.
+
+Coloring: Icons are typically zinc-500 (neutral) or orange-500 (active/highlight).
+
+6. Motion & Interaction (Framer Motion)
+
+Interactions should feel "bouncy" and responsive.
+
+Page Transitions: AnimatePresence with opacity: 0 to 1 and x: 20 to 0.
+
+Hover States: - Cards should lift slightly: whileHover={{ y: -10 }}.
+
+Buttons should scale: whileHover={{ scale: 1.05 }}.
+
+Map Paths: Use pathLength animation for SVG lines to simulate "drawing" the travel route.
+
+7. Layout Principles
+
+The 12-Column Grid: On desktop, use a 7:5 split (7 columns for content/timeline, 5 columns for the sticky Map).
+
+Sticky Navigation: - The top navigation is fixed and uses mix-blend-difference to stay visible over any background.
+
+The day selector is sticky at the top of the content area.
+
+Mobile First: Navigation moves to a bottom FixedNav bar on mobile screens.
+
+8. Tone of Voice (Copy)
+
+Languages: Main UI in English, Travel Content in Hebrew (RTL).
+
+Style: Short, punchy, "AI-driven" insights (e.g., "AI Journey Summary").

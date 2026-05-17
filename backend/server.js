@@ -71,7 +71,7 @@ passport.deserializeUser(async (id, done) => {
 // Setup Google strategy only when credentials are configured
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   const callbackURL = process.env.GOOGLE_CALLBACK_URL ||
-    `http://localhost:${process.env.PORT || 3001}/auth/google/callback`;
+    `http://localhost:${process.env.PORT || 6022}/auth/google/callback`;
 
   passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -372,7 +372,7 @@ app.get('/api/share/:token', async (req, res) => {
       places: places.rows.map(rowToPlace),
       savedIds: saved.rows.map((r) => r.place_id),
       visitedIds: visited.rows.map((r) => r.place_id),
-      hotel: hotel.rows[0] ? { name: hotel.rows[0].name, address: hotel.rows[0].address, lat: hotel.rows[0].lat, lng: hotel.rows[0].lng } : null,
+      hotel: hotel.rows.map(rowToHotel),
       dayPlans: plans.rows.map((r) => ({ id: r.id, title: r.title, placeIds: r.place_ids, pinnedPlaceIds: r.pinned_place_ids ?? [], pinnedTimes: r.pinned_times ?? {} })),
       tripConfig: config.rows[0] ? { tripName: config.rows[0].trip_name, dayStartHour: config.rows[0].day_start_hour, dayEndHour: config.rows[0].day_end_hour, lunchBreakStart: config.rows[0].lunch_break_start, lunchBreakEnd: config.rows[0].lunch_break_end, destination: config.rows[0].destination, startDate: config.rows[0].start_date ?? '', numDays: config.rows[0].num_days ?? 7 } : null,
       flights: flights.rows.map((r) => ({ id: r.id, type: r.type, flightDate: r.flight_date, flightTime: r.flight_time, airport: r.airport, flightNumber: r.flight_number, transferMinutes: r.transfer_minutes, notes: r.notes })),
@@ -445,11 +445,17 @@ app.post('/api/share/:token/copy', requireAuth, async (req, res) => {
       if (newId) await query('INSERT INTO visited_places (place_id, trip_id) VALUES ($1,$2)', [newId, newTripId]);
     }
 
-    // Copy hotel
-    if (srcHotel.rows[0]) {
-      const h = srcHotel.rows[0];
-      await query(`INSERT INTO hotel (name, address, lat, lng, trip_id) VALUES ($1,$2,$3,$4,$5)`,
-        [h.name, h.address, h.lat, h.lng, newTripId]);
+    // Copy hotels
+    for (const h of srcHotel.rows) {
+      await query(
+        `INSERT INTO hotel (hotel_id, name, address, lat, lng, trip_id,
+           check_in_date, check_out_date, check_in_time, check_out_time,
+           image_url, google_place_id, google_maps_url, website_url, phone_number, rating)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        [require('crypto').randomUUID(), h.name, h.address, h.lat, h.lng, newTripId,
+         h.check_in_date, h.check_out_date, h.check_in_time, h.check_out_time,
+         h.image_url, h.google_place_id, h.google_maps_url, h.website_url, h.phone_number, h.rating]
+      );
     }
 
     // Copy day plans (remap place IDs)
@@ -506,13 +512,56 @@ function defaultDurationByType(type) {
   }
 }
 
+function parseHourValue(value) {
+  if (!value) return null;
+  const match = String(value).match(/(\d{1,2})[:.](\d{2})/);
+  if (!match) return null;
+  return Number(match[1]) + Number(match[2]) / 60;
+}
+
+function formatHourLabel(hour) {
+  if (hour == null || Number.isNaN(hour)) return null;
+  const normalized = Math.max(0, hour);
+  const wholeHours = Math.floor(normalized);
+  const minutes = Math.round((normalized - wholeHours) * 60);
+  return `${String(wholeHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function extractArrivalHourFromFlightNotes(notes) {
+  if (!notes) return null;
+  const regex = /(?:מגיע(?:ה)?|נוחת(?:ת)?|arrival|arrive(?:s|d)?|landing|lands?)\D*(\d{1,2}[:.]\d{2})/gi;
+  const matches = [...String(notes).matchAll(regex)];
+  if (!matches.length) return null;
+  return parseHourValue(matches[matches.length - 1][1]);
+}
+
+function sortFlightsChronologically(flights) {
+  return [...(flights || [])].sort((left, right) => {
+    const leftStamp = `${left.flightDate || ''}T${left.flightTime || '00:00'}`;
+    const rightStamp = `${right.flightDate || ''}T${right.flightTime || '00:00'}`;
+    return leftStamp.localeCompare(rightStamp);
+  });
+}
+
+function getFlightPhase(flight, sortedFlights) {
+  if (!sortedFlights.length) return 'outbound';
+  if (flight.id === sortedFlights[0]?.id) return 'outbound';
+  if (flight.id === sortedFlights[sortedFlights.length - 1]?.id) return 'return';
+  return flight.type === 'departure' ? 'outbound' : 'return';
+}
+
 function buildChatSystemPrompt(systemContext) {
   return [
     'אתה עוזר טיולים חכם ואישי. יש לך גישה לכל המידע על הטיול.',
     'ענה תמיד בעברית. היה קצר, ברור ומועיל. אפשר להשתמש ב-emoji.',
     '',
     'חשוב: ענה תמיד ב-JSON בלבד, ללא markdown wrappers, בפורמט הזה בדיוק:',
-    '{"reply":"<תשובה עברית>","intent":"<intent>","params":{}}',
+    '{"reply":"<תשובה עברית>","intent":"<intent>","params":{},"steps":["step_id"]}',
+    '',
+    'חשוב מאוד: אם intent שונה מ-"info", אל תטען שביצעת את הפעולה בפועל.',
+    'אל תכתוב "קבעתי", "עדכנתי", "הזזתי", "תכננתי מחדש" או כל ניסוח שמציג ביצוע שכבר קרה.',
+    'במקום זה נסח את התשובה כהצעה או כהבנה של הפעולה הנדרשת, כי הביצוע כרגע ידני דרך כפתורים באפליקציה.',
+    'אם intent הוא "add_place" או "set_time", החזר params שעוזרים לחפש את המקום ב-Google Places: לפחות name/placeName ו-query, ואם ידוע גם type, area, addressHint, visitDurationMins, shortDescription.',
     '',
     'intent אפשרי (בחר אחד):',
     '"info" — שאלה/תשובה רגילה, אין שינוי נדרש',
@@ -525,37 +574,72 @@ function buildChatSystemPrompt(systemContext) {
     '',
     'params לפי intent:',
     'replan: {"reason":"סיבת השינוי"}',
-    'add_place: {"name":"שם המקום","type":"סוג","area":"אזור","visitDurationMins":90}',
-    'set_time: {"placeName":"שם","time":"HH:MM","dayTitle":"יום X"}',
+    'add_place: {"name":"שם המקום","query":"שם מדויק לחיפוש ב-Google Places","type":"סוג","area":"אזור","addressHint":"כתובת או שכונה אם ידוע","visitDurationMins":90,"shortDescription":"למה שווה להוסיף"}',
+    'set_time: {"placeName":"שם","time":"HH:MM","dayTitle":"יום X","query":"שם מדויק לחיפוש ב-Google Places","type":"סוג","area":"אזור","addressHint":"כתובת או שכונה אם ידוע","visitDurationMins":90,"shortDescription":"למה שווה להוסיף אם עדיין לא קיים"}',
     'mark_visited: {"placeName":"שם"}',
     'edit_place: {"placeName":"שם","field":"openingHours","value":"ערך חדש"}',
     '  שדות אפשריים: openingHours, visitDurationMinutes (מספר), entryCost (מספר), shortDescription, area, station, tips (טקסט מופרד בפסיקים)',
     'reschedule: {"detail":"פרטי השינוי"}',
+    '',
+    'steps אפשריים (החזר מערך steps עבור כל intent שאינו info):',
+    'check_place_exists, search_google_places, add_place_if_missing, save_place, move_place_to_day, pin_place_time, open_flight_editor, recompute_plan, mark_place_visited, update_place_field',
+    'דוגמאות:',
+    'replan -> ["recompute_plan"]',
+    'add_place -> ["search_google_places","save_place"]',
+    'set_time -> ["check_place_exists","add_place_if_missing","move_place_to_day","pin_place_time"]',
+    'mark_visited -> ["mark_place_visited"]',
+    'edit_place -> ["update_place_field"]',
+    'reschedule -> ["open_flight_editor","recompute_plan"]',
     '',
     systemContext,
   ].join('\n');
 }
 
 function parseAiResponse(rawText) {
-  try {
-    // Strip potential markdown code fences
-    const stripped = rawText.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
-    const match = stripped.match(/\{[\s\S]*\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]);
-      return {
-        reply: typeof parsed.reply === 'string' ? parsed.reply : rawText,
-        intent: typeof parsed.intent === 'string' ? parsed.intent : 'info',
-        params: (typeof parsed.params === 'object' && parsed.params !== null) ? parsed.params : {},
-      };
-    }
-  } catch (_) {}
-  return { reply: rawText, intent: 'info', params: {} };
+  const stripped = rawText.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
+  const candidates = [
+    stripped,
+    stripped.startsWith('"reply"') ? `{${stripped}}` : null,
+    stripped.startsWith("'reply'") ? `{${stripped}}` : null,
+  ].filter(Boolean);
+
+  const firstBrace = stripped.indexOf('{');
+  const lastBrace = stripped.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(stripped.slice(firstBrace, lastBrace + 1));
+  }
+
+  const seen = new Set();
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      let parsed = JSON.parse(candidate);
+      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+      if (parsed && typeof parsed === 'object') {
+        const nestedReply = typeof parsed.reply === 'string' ? parsed.reply.trim() : '';
+        let reply = typeof parsed.reply === 'string' ? parsed.reply : rawText;
+        if ((nestedReply.startsWith('{') || nestedReply.startsWith('"reply"')) && nestedReply.includes('"reply"')) {
+          reply = parseAiResponse(nestedReply).reply;
+        }
+        return {
+          reply,
+          intent: typeof parsed.intent === 'string' ? parsed.intent : 'info',
+          params: (typeof parsed.params === 'object' && parsed.params !== null) ? parsed.params : {},
+          steps: Array.isArray(parsed.steps) ? parsed.steps.filter((step) => typeof step === 'string') : [],
+        };
+      }
+    } catch (_) {}
+  }
+  return { reply: rawText, intent: 'info', params: {}, steps: [] };
 }
 
-function buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visitedIds }) {
+function buildTripContext({ places, hotel, hotels, dayPlans, tripConfig, flights, visitedIds }) {
   const visitedSet = new Set(visitedIds || []);
   const destination = tripConfig?.destination || 'יעד לא הוגדר';
+  const sortedFlights = sortFlightsChronologically(flights || []);
+  // Support both legacy single hotel and new hotels array
+  const hotelsArr = hotels || (hotel ? (Array.isArray(hotel) ? hotel : [hotel]) : []);
   const placesInfo = (places || []).map((p) => ({
     id: p.id, name: p.name, type: p.type, area: p.area || 'לא ידוע',
     station: p.station || '', openingHours: p.openingHours || 'לא ידוע',
@@ -568,10 +652,37 @@ function buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visite
     day: d.title, id: d.id, places: d.placeIds || [], pinned: d.pinnedPlaceIds || [],
     pinnedTimes: d.pinnedTimes || {},
   }));
-  const flightsInfo = (flights || []).map((f) => ({
-    type: f.type === 'arrival' ? 'נחיתה' : 'המראה',
-    date: f.flightDate, time: f.flightTime, airport: f.airport,
-    transferToHotelMins: f.transferMinutes, notes: f.notes,
+  const flightsInfo = sortedFlights.map((f) => {
+    const phase = getFlightPhase(f, sortedFlights);
+    const flightHour = parseHourValue(f.flightTime);
+    const arrivalHour = extractArrivalHourFromFlightNotes(f.notes);
+    const transferHours = Math.max(0, f.transferMinutes || 0) / 60;
+    const usableStartTime = phase === 'outbound' && (arrivalHour != null || flightHour != null)
+      ? formatHourLabel((arrivalHour ?? flightHour) + transferHours)
+      : null;
+    const usableEndTime = phase === 'return' && flightHour != null
+      ? formatHourLabel(Math.max(0, flightHour - transferHours))
+      : null;
+
+    return {
+      phase,
+      rawType: f.type,
+      typeLabel: f.type === 'arrival' ? 'נחיתה' : 'המראה',
+      date: f.flightDate,
+      time: f.flightTime,
+      airport: f.airport,
+      flightNumber: f.flightNumber || '',
+      transferToHotelMins: f.transferMinutes,
+      arrivalTimeFromNotes: arrivalHour != null ? formatHourLabel(arrivalHour) : null,
+      usableStartTime,
+      usableEndTime,
+      notes: f.notes,
+    };
+  });
+  const hotelsInfo = hotelsArr.map((h) => ({
+    name: h.name, address: h.address,
+    checkIn: h.checkInDate ? `${h.checkInDate} ${h.checkInTime || '15:00'}` : 'לא הוגדר',
+    checkOut: h.checkOutDate ? `${h.checkOutDate} ${h.checkOutTime || '11:00'}` : 'לא הוגדר',
   }));
   const startH = tripConfig?.dayStartHour ?? 9;
   const endH = tripConfig?.dayEndHour ?? 21;
@@ -580,7 +691,9 @@ function buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visite
   return [
     '## מידע על הטיול',
     `יעד: ${destination}`,
-    `מלון: ${hotel?.name || 'לא הוגדר'} (${hotel?.address || ''})`,
+    hotelsArr.length === 1
+      ? `מלון: ${hotelsArr[0].name} (${hotelsArr[0].address}) צ׳ק-אין: ${hotelsInfo[0].checkIn} צ׳ק-אאוט: ${hotelsInfo[0].checkOut}`
+      : `מלונות:\n${JSON.stringify(hotelsInfo, null, 2)}`,
     `שעות פעילות יומי: ${startH}:00-${endH}:00`,
     `הפסקת צהריים: ${lunchS}:00-${lunchE}:00`,
     '',
@@ -915,33 +1028,62 @@ app.put('/api/visited', async (_req, res) => res.json({ ok: true }));
 
 // ── hotel ─────────────────────────────────────────────────────────────────────
 
+function rowToHotel(r) {
+  return {
+    id: r.hotel_id,
+    name: r.name,
+    address: r.address,
+    lat: r.lat,
+    lng: r.lng,
+    checkInDate: r.check_in_date ?? undefined,
+    checkOutDate: r.check_out_date ?? undefined,
+    checkInTime: r.check_in_time ?? '15:00',
+    checkOutTime: r.check_out_time ?? '11:00',
+    imageUrl: r.image_url ?? undefined,
+    googlePlaceId: r.google_place_id ?? undefined,
+    googleMapsUrl: r.google_maps_url ?? undefined,
+    websiteUrl: r.website_url ?? undefined,
+    phoneNumber: r.phone_number ?? undefined,
+    rating: r.rating ?? undefined,
+  };
+}
+
+// GET — return array of hotels for trip
 app.get('/api/trips/:tripId/hotel', requireAuth, async (req, res) => {
   try {
-    const result = await query('SELECT * FROM hotel WHERE trip_id=$1', [req.params.tripId]);
-    res.json(result.rows[0] ? { name: result.rows[0].name, address: result.rows[0].address, lat: result.rows[0].lat, lng: result.rows[0].lng } : null);
+    const result = await query(
+      'SELECT * FROM hotel WHERE trip_id=$1 ORDER BY check_in_date ASC NULLS LAST',
+      [req.params.tripId]
+    );
+    res.json(result.rows.map(rowToHotel));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// PUT — replace all hotels for trip (array)
 app.put('/api/trips/:tripId/hotel', requireAuth, async (req, res) => {
   try {
-    const { name, address, lat, lng } = req.body;
-    await query(
-      `INSERT INTO hotel (trip_id, name, address, lat, lng)
-       VALUES ($1,$2,$3,$4,$5)
-       ON CONFLICT (trip_id) DO UPDATE SET name=$2, address=$3, lat=$4, lng=$5`,
-      [req.params.tripId, name, address, lat, lng]
-    );
-    res.json({ name, address, lat, lng });
+    const hotels = Array.isArray(req.body) ? req.body : [req.body];
+    await query('DELETE FROM hotel WHERE trip_id=$1', [req.params.tripId]);
+    for (const h of hotels) {
+      const hotelId = h.id || require('crypto').randomUUID();
+      await query(
+        `INSERT INTO hotel (hotel_id, trip_id, name, address, lat, lng,
+           check_in_date, check_out_date, check_in_time, check_out_time,
+           image_url, google_place_id, google_maps_url, website_url, phone_number, rating)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        [hotelId, req.params.tripId, h.name, h.address, h.lat, h.lng,
+         h.checkInDate ?? null, h.checkOutDate ?? null,
+         h.checkInTime ?? '15:00', h.checkOutTime ?? '11:00',
+         h.imageUrl ?? null, h.googlePlaceId ?? null, h.googleMapsUrl ?? null,
+         h.websiteUrl ?? null, h.phoneNumber ?? null, h.rating ?? null]
+      );
+    }
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Legacy
-app.get('/api/hotel', async (_req, res) => {
-  try {
-    const result = await query('SELECT * FROM hotel WHERE id=1');
-    res.json(result.rows[0] ?? null);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// Legacy (no-op)
+app.get('/api/hotel', async (_req, res) => res.json([]));
 app.put('/api/hotel', async (_req, res) => res.json({ ok: true }));
 
 // ── day plans ─────────────────────────────────────────────────────────────────
@@ -1054,8 +1196,8 @@ app.delete('/api/flights/:id', async (_req, res) => res.json({ ok: true }));
 app.post('/api/trips/:tripId/ai/plan', requireAuth, async (req, res) => {
   try {
     const genAI = getGeminiClient();
-    const { places, hotel, dayPlans, tripConfig, flights, visitedIds } = req.body;
-    const systemContext = buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visitedIds });
+    const { places, hotels, dayPlans, tripConfig, flights, visitedIds } = req.body;
+    const systemContext = buildTripContext({ places, hotels, dayPlans, tripConfig, flights, visitedIds });
     const startH = tripConfig?.dayStartHour ?? 9;
     const endH = tripConfig?.dayEndHour ?? 21;
     const lunchS = tripConfig?.lunchBreakStart ?? 13;
@@ -1071,7 +1213,7 @@ app.post('/api/trips/:tripId/ai/plan', requireAuth, async (req, res) => {
       '4. עדיפות 5 נכנסת ראשונה, עדיפות 1 אחרונה',
       '5. קבץ לפי אזור גיאוגרפי',
       '6. אוכל בבוקר = ארוחת בוקר/קפה, אוכל בצהריים/ערב = מסעדה',
-      '7. ביום עם נחיתה — תכנן רק מקומות לאחר שעת הנחיתה + זמן העברה למלון (transferToHotelMins). ביום עם המראה — תכנן מקומות רק עד שעה לפני ההמראה (כולל זמן נסיעה לשדה). בימי טיסה בכלל — פחות מקומות. שים לב לשדה time בטיסות ותכנן בהתאם',
+      '7. בטיסות יש phase (outbound/return) ולעיתים גם usableStartTime או usableEndTime. ביום outbound תכנן מקומות רק אחרי usableStartTime; ביום return תכנן מקומות רק עד usableEndTime. בימי טיסה בכלל תכנן פחות מקומות והטיסה עצמה היא חלק מהיום',
       '8. מקומות עם isVisited=true — אל תכלול שוב',
       '9. מקומות מעוגנים (pinned) — שמור ביום שלהם. אם pinnedTimes מכיל שעה עבור המקום — תכנן שהגעה תהיה לפני אותה שעה (כולל זמן נסיעה). שאר מקומות היום יסתדרו סביב השעה הזו',
       '10. אם יש 2 מקומות דומים מאוד — ציין בהמלצות',
@@ -1098,8 +1240,8 @@ app.post('/api/trips/:tripId/ai/plan', requireAuth, async (req, res) => {
 app.post('/api/trips/:tripId/ai/chat', requireAuth, async (req, res) => {
   try {
     const genAI = getGeminiClient();
-    const { message, history, places, hotel, dayPlans, tripConfig, flights, visitedIds } = req.body;
-    const systemContext = buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visitedIds });
+    const { message, history, places, hotels, dayPlans, tripConfig, flights, visitedIds } = req.body;
+    const systemContext = buildTripContext({ places, hotels, dayPlans, tripConfig, flights, visitedIds });
     const systemPrompt = buildChatSystemPrompt(systemContext);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const chat = model.startChat({
@@ -1113,8 +1255,8 @@ app.post('/api/trips/:tripId/ai/chat', requireAuth, async (req, res) => {
       ],
     });
     const rawText = (await chat.sendMessage(message)).response.text();
-    const { reply, intent, params } = parseAiResponse(rawText);
-    res.json({ reply, intent, params });
+    const { reply, intent, params, steps } = parseAiResponse(rawText);
+    res.json({ reply, intent, params, steps });
   } catch (e) {
     console.error('AI chat error:', e.message);
     res.status(500).json({ error: e.message });
@@ -1126,13 +1268,13 @@ app.post('/api/ai/plan', async (req, res) => res.status(400).json({ error: 'use 
 app.post('/api/ai/chat', requireAuth, async (req, res) => {
   try {
     const genAI = getGeminiClient();
-    const { message, history, sessionId, places, hotel, dayPlans, tripConfig, flights, visitedIds } = req.body;
-    const systemContext = buildTripContext({ places, hotel, dayPlans, tripConfig, flights, visitedIds });
+    const { message, history, sessionId, places, hotels, dayPlans, tripConfig, flights, visitedIds } = req.body;
+    const systemContext = buildTripContext({ places, hotels, dayPlans, tripConfig, flights, visitedIds });
     const systemPrompt = buildChatSystemPrompt(systemContext);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const chat = model.startChat({ history: [{ role: 'user', parts: [{ text: systemPrompt }] }, { role: 'model', parts: [{ text: '{"reply":"הבנתי! אני כאן לעזור עם תכנון הטיול 🗺️","intent":"info","params":{}}' }] }, ...(history || []).map((msg) => ({ role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }] }))] });
     const rawText = (await chat.sendMessage(message)).response.text();
-    const { reply, intent, params } = parseAiResponse(rawText);
+    const { reply, intent, params, steps } = parseAiResponse(rawText);
 
     // Persist both messages to DB
     if (sessionId) {
@@ -1142,7 +1284,7 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
       );
       await query(
         `INSERT INTO chat_messages (id, session_id, role, content, meta) VALUES ($1,$2,'assistant',$3,$4)`,
-        [uuidv4(), sessionId, reply, JSON.stringify({ intent, params })]
+        [uuidv4(), sessionId, reply, JSON.stringify({ intentAction: intent && intent !== 'info' ? { intent, params: params || {}, steps: steps || [] } : undefined })]
       );
       await query(
         `UPDATE chat_sessions SET updated_at = now() WHERE id = $1`,
@@ -1150,7 +1292,7 @@ app.post('/api/ai/chat', requireAuth, async (req, res) => {
       );
     }
 
-    res.json({ reply, intent, params });
+    res.json({ reply, intent, params, steps });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1192,6 +1334,20 @@ app.get('/api/chat/sessions/:id/messages', async (req, res) => {
       [req.params.id]
     );
     res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/chat/messages/:id/meta', async (req, res) => {
+  try {
+    const { patch } = req.body;
+    if (!patch || typeof patch !== 'object') return res.status(400).json({ error: 'patch required' });
+    await query(
+      `UPDATE chat_messages SET meta = COALESCE(meta, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+      [req.params.id, JSON.stringify(patch)]
+    );
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1254,7 +1410,7 @@ process.on('unhandledRejection', (reason) => {
   console.error('Unhandled rejection:', reason instanceof Error ? reason.stack : reason);
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 6022;
 
 initSchema()
   .then(() => {
