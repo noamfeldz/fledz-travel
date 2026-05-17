@@ -191,6 +191,21 @@ async function initSchema() {
   await query(`ALTER TABLE trip_config    ADD COLUMN IF NOT EXISTS start_date DATE`);
   await query(`ALTER TABLE trip_config    ADD COLUMN IF NOT EXISTS num_days INTEGER DEFAULT 7`);
 
+  // New hotel columns (multi-hotel schema)
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS hotel_id TEXT`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS check_in_date DATE`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS check_out_date DATE`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS check_in_time TEXT NOT NULL DEFAULT '15:00'`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS check_out_time TEXT NOT NULL DEFAULT '11:00'`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS image_url TEXT`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS google_place_id TEXT`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS google_maps_url TEXT`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS website_url TEXT`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS phone_number TEXT`);
+  await query(`ALTER TABLE hotel ADD COLUMN IF NOT EXISTS rating REAL`);
+  // Backfill hotel_id for existing rows that don't have one yet
+  await query(`UPDATE hotel SET hotel_id = gen_random_uuid()::text WHERE hotel_id IS NULL`);
+
   // Drop singleton check constraints so multiple hotels/trip_configs can exist (one per trip)
   await query(`ALTER TABLE hotel       DROP CONSTRAINT IF EXISTS hotel_id_check`);
   await query(`ALTER TABLE trip_config DROP CONSTRAINT IF EXISTS trip_config_id_check`);
