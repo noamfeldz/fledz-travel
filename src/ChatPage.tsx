@@ -71,7 +71,7 @@ type IntentLookupState =
   | { status: "candidates"; message: string; candidates: IntentLookupCandidate[] }
   | { status: "error"; message: string };
 
-type IntentType = "info" | "replan" | "add_place" | "set_time" | "mark_visited" | "edit_place" | "reschedule";
+type IntentType = "info" | "replan" | "add_place" | "set_time" | "mark_visited" | "edit_place" | "reschedule" | "add_transit";
 type IntentStepId =
   | "check_place_exists"
   | "search_google_places"
@@ -82,7 +82,8 @@ type IntentStepId =
   | "open_flight_editor"
   | "recompute_plan"
   | "mark_place_visited"
-  | "update_place_field";
+  | "update_place_field"
+  | "save_transit";
 
 export type IntentAction = {
   intent: IntentType;
@@ -90,7 +91,7 @@ export type IntentAction = {
   steps?: IntentStepId[];
 };
 
-const ACTIONABLE_INTENTS: IntentType[] = ["replan", "add_place", "set_time", "mark_visited", "edit_place", "reschedule"];
+const ACTIONABLE_INTENTS: IntentType[] = ["replan", "add_place", "set_time", "mark_visited", "edit_place", "reschedule", "add_transit"];
 const ALLOWED_STEP_IDS: IntentStepId[] = [
   "check_place_exists",
   "search_google_places",
@@ -102,6 +103,7 @@ const ALLOWED_STEP_IDS: IntentStepId[] = [
   "recompute_plan",
   "mark_place_visited",
   "update_place_field",
+  "save_transit",
 ];
 
 const DEFAULT_INTENT_STEPS: Record<Exclude<IntentType, "info">, IntentStepId[]> = {
@@ -111,6 +113,7 @@ const DEFAULT_INTENT_STEPS: Record<Exclude<IntentType, "info">, IntentStepId[]> 
   mark_visited: ["mark_place_visited"],
   edit_place: ["update_place_field"],
   reschedule: ["open_flight_editor", "recompute_plan"],
+  add_transit: ["save_transit"],
 };
 
 const STEP_LABELS: Record<IntentStepId, string> = {
@@ -124,6 +127,7 @@ const STEP_LABELS: Record<IntentStepId, string> = {
   recompute_plan: "מחשב מחדש תוכנית בהתאם לשינוי",
   mark_place_visited: "מסמן את המקום כביקור",
   update_place_field: "מעדכן את שדות המקום הרלוונטיים",
+  save_transit: "שומר את הנסיעה ביומן (כולל חזור אם רלוונטי)",
 };
 
 function normalizePlaceLookup(value: string) {
@@ -1031,6 +1035,32 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
                 {renderButton("📌 פתח טיפול ידני", () => onAction?.("set_time", params), "secondary")}
               </div>
             )}
+          </div>
+        );
+      }
+      case "add_transit": {
+        const fromLabel = typeof params.fromLabel === "string" ? params.fromLabel : "";
+        const toLabel = typeof params.toLabel === "string" ? params.toLabel : "";
+        const departTime = typeof params.departTime === "string" ? params.departTime : "";
+        const arriveTime = typeof params.arriveTime === "string" ? params.arriveTime : "";
+        const mode = typeof params.mode === "string" ? params.mode : "";
+        const cost = typeof params.cost === "string" ? params.cost : "";
+        const isRoundTrip = params.roundTrip === true;
+        return (
+          <div className="chat-intent-panel">
+            <span className="chat-intent-kicker">פעולה מוצעת</span>
+            <strong className="chat-intent-title">🚆 הוספת נסיעה ליומן</strong>
+            <p className="chat-intent-summary">
+              {fromLabel && toLabel ? `${fromLabel} ← ${toLabel}` : "נסיעה מתוזמנת"}
+              {typeof params.dayTitle === "string" && params.dayTitle ? ` · ${params.dayTitle}` : ""}
+              {departTime ? ` · יציאה ${departTime}` : ""}{arriveTime ? `, הגעה ${arriveTime}` : ""}
+              {mode ? ` · ${mode}` : ""}{cost ? ` · ${cost}` : ""}
+              {isRoundTrip ? " · כולל חזור" : ""}. הנסיעה עדיין לא נשמרה.
+            </p>
+            {renderSteps(messageId)}
+            <div className="chat-intent-actions">
+              {renderButton(isRoundTrip ? "🚆 הוסף הלוך ושוב ליומן" : "🚆 הוסף נסיעה ליומן", () => onAction?.("add_transit", params), "primary")}
+            </div>
           </div>
         );
       }

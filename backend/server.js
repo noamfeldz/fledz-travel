@@ -993,6 +993,46 @@ app.delete('/api/trips/:tripId/flights/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── transits (scheduled in-trip rides: tube/train/bus/taxi) ──────────────────
+
+function rowToTransit(r) {
+  return {
+    id: r.id, dayId: r.day_id, fromLabel: r.from_label, toLabel: r.to_label,
+    departTime: r.depart_time ?? '', arriveTime: r.arrive_time ?? '',
+    mode: r.mode ?? '', line: r.line ?? '', cost: r.cost ?? '', notes: r.notes ?? '',
+  };
+}
+
+app.get('/api/trips/:tripId/transits', requireAuth, async (req, res) => {
+  try {
+    const result = await query('SELECT * FROM transits WHERE trip_id=$1 ORDER BY day_id ASC, depart_time ASC', [req.params.tripId]);
+    res.json(result.rows.map(rowToTransit));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/trips/:tripId/transits', requireAuth, async (req, res) => {
+  try {
+    const t = req.body;
+    if (!t.dayId || !t.fromLabel || !t.toLabel) return res.status(400).json({ error: 'dayId, fromLabel, toLabel required' });
+    const id = t.id || `transit-${Date.now()}-${uuidv4().slice(0, 6)}`;
+    await query(
+      `INSERT INTO transits (id, trip_id, day_id, from_label, to_label, depart_time, arrive_time, mode, line, cost, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (id) DO UPDATE SET day_id=$3, from_label=$4, to_label=$5, depart_time=$6, arrive_time=$7, mode=$8, line=$9, cost=$10, notes=$11`,
+      [id, req.params.tripId, t.dayId, t.fromLabel, t.toLabel, t.departTime ?? '', t.arriveTime ?? '', t.mode ?? '', t.line ?? '', t.cost ?? '', t.notes ?? '']
+    );
+    const row = await query('SELECT * FROM transits WHERE id=$1', [id]);
+    res.status(201).json(rowToTransit(row.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/trips/:tripId/transits/:id', requireAuth, async (req, res) => {
+  try {
+    await query('DELETE FROM transits WHERE id=$1 AND trip_id=$2', [req.params.id, req.params.tripId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Legacy
 app.get('/api/plans', async (_req, res) => {
   try {
@@ -1024,8 +1064,8 @@ app.delete('/api/flights/:id', async (_req, res) => res.json({ ok: true }));
 app.post('/api/trips/:tripId/ai/plan', requireAuth, async (req, res) => {
   try {
     const genAI = getGeminiClient();
-    const { places, hotels, dayPlans, tripConfig, flights, visitedIds } = req.body;
-    const systemContext = buildTripContext({ places, hotels, dayPlans, tripConfig, flights, visitedIds });
+    const { places, hotels, dayPlans, tripConfig, flights, visitedIds, transits } = req.body;
+    const systemContext = buildTripContext({ places, hotels, dayPlans, tripConfig, flights, visitedIds, transits });
     const startH = tripConfig?.dayStartHour ?? 9;
     const endH = tripConfig?.dayEndHour ?? 21;
     const lunchS = tripConfig?.lunchBreakStart ?? 13;
@@ -1049,6 +1089,7 @@ app.post('/api/trips/:tripId/ai/plan', requireAuth, async (req, res) => {
       '12. אם ברשימה יש מקומות מסוג "ילדים", המשפחה מטיילת עם ילדים קטנים: קצב רגוע — עד 3-4 מקומות ביום, לכל היותר אטרקציה אינטנסיבית אחת ביום, והשאר מרווח לזמן מנוחה',
       '13. העדף מקומות קרובים זה לזה באותו יום כדי לצמצם נסיעות; אם יום מחייב נסיעה ארוכה — ציין זאת בהמלצות כולל אמצעי תחבורה מומלץ',
       '14. מקום מסוג "אירוע" הוא עוגן בשעה נעולה — אסור להזיז אותו מהיום והשעה שלו, תכנן הגעה לפני תחילתו (כולל זמן נסיעה), ואל תשבץ שום דבר שמתנגש בו. אם הוא מתנגש בטיסה — ציין זאת בהמלצות',
+      '15. נסיעות מתוזמנות (transits) הן עוגנים נעולים בדיוק כמו טיסות — אל תשבץ מקומות שמתנגשים בהן, ותכנן הגעה לנקודת היציאה לפני שעת היציאה',
       '',
       systemContext,
       '',
@@ -1072,8 +1113,8 @@ app.post('/api/trips/:tripId/ai/plan', requireAuth, async (req, res) => {
 app.post('/api/trips/:tripId/ai/chat', requireAuth, async (req, res) => {
   try {
     const genAI = getGeminiClient();
-    const { message, history, places, hotels, dayPlans, tripConfig, flights, visitedIds } = req.body;
-    const systemContext = buildTripContext({ places, hotels, dayPlans, tripConfig, flights, visitedIds });
+    const { message, history, places, hotels, dayPlans, tripConfig, flights, visitedIds, transits } = req.body;
+    const systemContext = buildTripContext({ places, hotels, dayPlans, tripConfig, flights, visitedIds, transits });
     const systemPrompt = buildChatSystemPrompt(systemContext);
     // googleSearch grounding lets the model look up live info (event dates,
     // current opening hours, weather) before answering.
@@ -1102,8 +1143,8 @@ app.post('/api/ai/plan', async (req, res) => res.status(400).json({ error: 'use 
 app.post('/api/ai/chat', requireAuth, async (req, res) => {
   try {
     const genAI = getGeminiClient();
-    const { message, history, sessionId, places, hotels, dayPlans, tripConfig, flights, visitedIds } = req.body;
-    const systemContext = buildTripContext({ places, hotels, dayPlans, tripConfig, flights, visitedIds });
+    const { message, history, sessionId, places, hotels, dayPlans, tripConfig, flights, visitedIds, transits } = req.body;
+    const systemContext = buildTripContext({ places, hotels, dayPlans, tripConfig, flights, visitedIds, transits });
     const systemPrompt = buildChatSystemPrompt(systemContext);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', tools: [{ googleSearch: {} }] });
     const chat = model.startChat({ history: [{ role: 'user', parts: [{ text: systemPrompt }] }, { role: 'model', parts: [{ text: '{"reply":"הבנתי! אני כאן לעזור עם תכנון הטיול 🗺️","intent":"info","params":{}}' }] }, ...(history || []).map((msg) => ({ role: msg.role === 'user' ? 'user' : 'model', parts: [{ text: msg.content }] }))] });

@@ -540,6 +540,8 @@ input:focus, select:focus, textarea:focus {
   width: 100%;
   height: 240px;
   object-fit: cover;
+  display: block;
+  background: var(--color-surface-strong, #121212);
 }
 
 .place-body {
@@ -4978,11 +4980,29 @@ label {
   color: var(--color-text-muted);
 }
 
-.section-head h2,
-.settings-section-header h2 {
+.section-head h2 {
   font-size: clamp(2rem, 3.8vw, 3.35rem);
   line-height: 0.96;
 }
+
+.settings-section-header h2 {
+  font-size: 1.4rem;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  color: var(--color-text-main);
+  margin-bottom: 0.25rem;
+}
+
+.settings-section-header span {
+  font-size: 0.88rem;
+  color: var(--color-text-muted);
+}
+
+.planner-stack > .section-head {
+  padding-inline: var(--page-gutter, 1rem);
+  margin-top: 1rem;
+}
+
 
 .trip-top-bar {
   position: fixed;
@@ -5019,6 +5039,18 @@ label {
 
 .trip-top-bar-menu:hover {
   color: #fff;
+}
+
+/* The ☰ top-bar is position:fixed at the top-right corner. On mobile the
+   right-aligned page header (eyebrow + title) runs full-width straight under
+   it, so the menu overlaps the heading text. Reserve corner space on narrow
+   screens so every view's header clears the floating menu. */
+@media (max-width: 767px) {
+  .section-head,
+  .settings-section-header,
+  .dashboard-header-inner {
+    padding-inline-start: 3rem; /* RTL: inline-start = right = the menu corner */
+  }
 }
 
 .trip-user-avatar,
@@ -6637,7 +6669,11 @@ label {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  margin: 0 -1rem 1.5rem -1rem;
+  /* Parent .planner-stack has zero padding here, so negative side margins
+     overflowed the rounded panel (the "kink"). Sit flush inside instead and
+     round the top corners to follow the panel. */
+  margin: 0 0 1.5rem 0;
+  border-radius: 2rem 2rem 0 0;
   scrollbar-width: none;
   justify-content: flex-start;
 }
@@ -8129,4 +8165,30 @@ label {
 .chip--event {
   background: rgba(219, 39, 119, 0.18);
   color: #fbcfe8;
+}
+
+/* ── Scheduled transit blocks in the calendar ──────────────────────────────── */
+.planner-cal-block--ride {
+  --cal-accent: #0ea5e9;
+  --cal-bg: rgba(14, 165, 233, 0.16);
+}
+
+.planner-cal-ride-remove {
+  position: absolute;
+  top: 0.25rem;
+  inset-inline-end: 0.25rem;
+  z-index: 3;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.8rem;
+  border-radius: 0.5rem;
+  background: rgba(10, 10, 12, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #eee;
+  box-shadow: none;
+}
+
+.planner-cal-ride-remove:hover {
+  background: rgba(220, 38, 38, 0.5);
+  transform: none;
+  box-shadow: none;
 }

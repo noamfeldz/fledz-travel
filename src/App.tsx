@@ -49,12 +49,14 @@ type HotelDraft = { name: string; address: string; lat: string; lng: string; che
 type DayPlan = { id: string; title: string; placeIds: string[]; pinnedPlaceIds: string[]; pinnedTimes?: Record<string, string>; dayEndHour?: number; };
 type TripConfig = { tripName: string; dayStartHour: number; dayEndHour: number; lunchBreakStart: number; lunchBreakEnd: number; destination: string; startDate?: string; numDays?: number; };
 type Flight = { id: string; type: "arrival" | "departure"; flightDate: string; flightTime: string; airport: string; flightNumber?: string; transferMinutes: number; notes: string; };
+type Transit = { id: string; dayId: string; fromLabel: string; toLabel: string; departTime: string; arriveTime: string; mode: string; line: string; cost: string; notes: string; };
 type PlannerFlightPhase = "outbound" | "return";
 type PlannerDayFlightEntry = { flight: Flight; phase: PlannerFlightPhase; startHour: number; endHour: number; dayPart: string; };
 type PlannerDayFlightContext = { flights: PlannerDayFlightEntry[]; availableStartHour: number; availableEndHour: number; hasOutboundFlight: boolean; };
 type PlannerTimelineEntry =
   | { kind: "flight"; flight: Flight; phase: PlannerFlightPhase; startHour: number; endHour: number; startLabel: string; endLabel: string; dayPart: string; durationMinutes: number; idleBeforeMinutes: number; }
   | { kind: "hotel"; hotel: Hotel; subKind: "checkin" | "checkout"; startHour: number; endHour: number; startLabel: string; endLabel: string; dayPart: string; durationMinutes: number; idleBeforeMinutes: number; }
+  | { kind: "transit"; transit: Transit; startHour: number; endHour: number; startLabel: string; endLabel: string; dayPart: string; durationMinutes: number; idleBeforeMinutes: number; }
   | { kind: "place"; place: Place; startHour: number; endHour: number; startLabel: string; endLabel: string; dayPart: string; durationMinutes: number; travelMode: TransportMode; travelMinutes: number; isTight: boolean; leadInLabel: string; idleBeforeMinutes: number; };
 type ChatMessage = { role: "user" | "assistant"; content: string; };
 type AiPlanResult = { plan: Record<string, string[]>; excluded: Array<{ placeId: string; reason: string }>; recommendations: string[]; summary: string; };
@@ -615,7 +617,7 @@ function getActiveHotelForDay(dayIndex: number, hotels: Hotel[], tripConfig?: Tr
   });
   return active ?? hotels[0];
 }
-function buildDayTimeline(day: DayPlan, places: Place[], hotel: Hotel, tripConfig: TripConfig | undefined, flightContext: PlannerDayFlightContext, dayDate?: string) {
+function buildDayTimeline(day: DayPlan, places: Place[], hotel: Hotel, tripConfig: TripConfig | undefined, flightContext: PlannerDayFlightContext, dayDate?: string, dayTransits: Transit[] = []) {
   const dayPlaces = day.placeIds.map((placeId) => places.find((place) => place.id === placeId)).filter(Boolean) as Place[];
   const startHour = flightContext.availableStartHour;
   const endHour = flightContext.availableEndHour;
@@ -683,13 +685,31 @@ function buildDayTimeline(day: DayPlan, places: Place[], hotel: Hotel, tripConfi
     hotelEntries.push({ kind: "hotel", hotel, subKind: "checkout", startHour: checkoutHour, endHour: checkoutHour + 0.5, startLabel: formatHourLabel(checkoutHour), endLabel: formatHourLabel(checkoutHour + 0.5), dayPart: getDayPartLabel(checkoutHour), durationMinutes: 30, idleBeforeMinutes: 0 });
   }
 
-  const ordered = [...flightEntries, ...hotelEntries, ...placeEntries].sort((left, right) => {
+  const transitEntries = dayTransits.map<PlannerTimelineEntry>((transit) => {
+    const transitStart = parseHourValue(transit.departTime) ?? startHour;
+    const transitEnd = Math.max(transitStart + 0.25, parseHourValue(transit.arriveTime) ?? transitStart + 0.5);
+    return {
+      kind: "transit",
+      transit,
+      startHour: transitStart,
+      endHour: transitEnd,
+      startLabel: formatHourLabel(transitStart),
+      endLabel: formatHourLabel(transitEnd),
+      dayPart: getDayPartLabel(transitStart),
+      durationMinutes: Math.max(15, Math.round((transitEnd - transitStart) * 60)),
+      idleBeforeMinutes: 0,
+    };
+  });
+
+  const ordered = [...flightEntries, ...hotelEntries, ...transitEntries, ...placeEntries].sort((left, right) => {
     if (left.startHour !== right.startHour) return left.startHour - right.startHour;
     if (left.kind === right.kind) return 0;
     if (left.kind === "flight") return -1;
     if (right.kind === "flight") return 1;
     if (left.kind === "hotel") return -1;
     if (right.kind === "hotel") return 1;
+    if (left.kind === "transit") return -1;
+    if (right.kind === "transit") return 1;
     return 0;
   });
 
@@ -883,6 +903,7 @@ function App() {
   const [dayPlans, setDayPlans] = useState<DayPlan[]>(() => normalizeDayPlans(readLocalStorage(STORAGE_KEYS.plans, defaultPlans)));
   const [tripConfig, setTripConfig] = useState<TripConfig>(() => readLocalStorage(STORAGE_KEYS.tripConfig, defaultTripConfig));
   const [flights, setFlights] = useState<Flight[]>(() => readLocalStorage(STORAGE_KEYS.flights, []));
+  const [transits, setTransits] = useState<Transit[]>([]);
   const [visitedIds, setVisitedIds] = useState<string[]>(() => readLocalStorage(STORAGE_KEYS.visited, []));
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -1009,13 +1030,14 @@ function App() {
     if (!tripId) return;
     dbInitDone.current = false;
     apiFetch("/health").then(async () => {
-      const [dbPlaces, dbHotel, dbPlans, dbVisited, dbTripConfig, dbFlights] = await Promise.all([
+      const [dbPlaces, dbHotel, dbPlans, dbVisited, dbTripConfig, dbFlights, dbTransits] = await Promise.all([
         apiFetch(`${apiBase}/places`),
         apiFetch(`${apiBase}/hotel`),
         apiFetch(`${apiBase}/plans`),
         apiFetch(`${apiBase}/visited`),
         apiFetch(`${apiBase}/trip-config`),
         apiFetch(`${apiBase}/flights`),
+        apiFetch(`${apiBase}/transits`).catch(() => []),
       ]);
       if (Array.isArray(dbPlaces) && dbPlaces.length > 0) setPlaces(dbPlaces as Place[]);
       if (Array.isArray(dbHotel) && dbHotel.length > 0) setHotels(dbHotel as Hotel[]);
@@ -1023,6 +1045,7 @@ function App() {
       if (Array.isArray(dbVisited)) setVisitedIds(dbVisited as string[]);
       if (dbTripConfig) setTripConfig(dbTripConfig as TripConfig);
       if (Array.isArray(dbFlights)) setFlights(dbFlights as Flight[]);
+      if (Array.isArray(dbTransits)) setTransits(dbTransits as Transit[]);
       setDbReady(true);
     }).catch(() => {
       // API not available — continue with localStorage only
@@ -1253,9 +1276,9 @@ function App() {
   const timelineByDayId = useMemo(() => dayPlans.reduce<Record<string, ReturnType<typeof buildDayTimeline>>>((result, day, index) => {
     const activeHotel = getActiveHotelForDay(index, hotels, tripConfig) ?? defaultHotel;
     const dayDate = tripConfig?.startDate ? (() => { const d = new Date(tripConfig.startDate); d.setDate(d.getDate() + index); return d.toISOString().slice(0, 10); })() : undefined;
-    result[day.id] = buildDayTimeline(day, places, activeHotel, tripConfig, flightContextByDayId[day.id] ?? buildPlannerDayFlightContext(0, dayPlans.length, day, tripConfig, flights), dayDate);
+    result[day.id] = buildDayTimeline(day, places, activeHotel, tripConfig, flightContextByDayId[day.id] ?? buildPlannerDayFlightContext(0, dayPlans.length, day, tripConfig, flights), dayDate, transits.filter((t) => t.dayId === day.id));
     return result;
-  }, {}), [dayPlans, hotels, places, tripConfig, flightContextByDayId, flights]);
+  }, {}), [dayPlans, hotels, places, tripConfig, flightContextByDayId, flights, transits]);
   useEffect(() => {
     if (!dayPlans.length) return;
     if (!activePlannerDayId || !dayPlans.some((day) => day.id === activePlannerDayId)) {
@@ -1641,7 +1664,20 @@ function App() {
     setFlights((current) => current.filter((f) => f.id !== id));
     apiFetch(`${apiBase}/flights/${id}`, { method: "DELETE" }).catch(() => {});
   };
-  const buildAiContext = () => ({ places, hotels, dayPlans, tripConfig, flights, visitedIds });
+  const addTransitRecord = async (transit: Omit<Transit, "id">) => {
+    const optimistic: Transit = { ...transit, id: `transit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` };
+    setTransits((current) => [...current, optimistic]);
+    try {
+      const saved = await apiFetch(`${apiBase}/transits`, { method: "POST", body: JSON.stringify(optimistic) }) as Transit;
+      setTransits((current) => current.map((t) => t.id === optimistic.id ? saved : t));
+    } catch { /* optimistic state stays; will reload from DB next mount */ }
+    return optimistic;
+  };
+  const removeTransit = (id: string) => {
+    setTransits((current) => current.filter((t) => t.id !== id));
+    apiFetch(`${apiBase}/transits/${id}`, { method: "DELETE" }).catch(() => {});
+  };
+  const buildAiContext = () => ({ places, hotels, dayPlans, tripConfig, flights, visitedIds, transits });
   const runAiPlan = async () => {
     setAiPlanLoading(true);
     setAiPlanResult(null);
@@ -1690,7 +1726,7 @@ function App() {
         // Fields the AI is allowed to update directly
         const ALLOWED_FIELDS: (keyof Place)[] = [
           'openingHours', 'visitDurationMinutes', 'entryCost',
-          'shortDescription', 'area', 'station', 'tips',
+          'shortDescription', 'area', 'station', 'tips', 'aiNotes',
         ];
         const found = findExistingPlaceForIntent((params.placeName as string) ?? '');
         if (found && field && ALLOWED_FIELDS.includes(field as keyof Place) && value !== undefined) {
@@ -1699,6 +1735,9 @@ function App() {
               ? Number(value)
               : field === 'tips'
               ? (typeof value === 'string' ? value.split(',').map((s) => s.trim()) : value)
+              // aiNotes accumulates knowledge — append instead of overwriting
+              : field === 'aiNotes'
+              ? (found.aiNotes ? `${found.aiNotes}\n${String(value)}` : String(value))
               : value;
           const updated = { ...found, [field]: parsedValue } as Place;
           setPlaces((current) => current.map((p) => p.id === found.id ? updated : p));
@@ -1727,6 +1766,22 @@ function App() {
         // The button says "open flight update" — land the user on the flights section
         setTimeout(() => document.getElementById('settings-flights')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 350);
         break;
+      case 'add_transit': {
+        const str = (key: string) => typeof params[key] === 'string' ? (params[key] as string).trim() : '';
+        const fromLabel = str('fromLabel');
+        const toLabel = str('toLabel');
+        if (!fromLabel || !toLabel) { navigate(viewPaths.planner); break; }
+        const dayId = resolveDayIdFromIntent(str('dayTitle')) ?? dayPlans[0]?.id;
+        if (!dayId) break;
+        const base = { dayId, mode: str('mode'), line: str('line'), cost: str('cost'), notes: str('notes') };
+        void addTransitRecord({ ...base, fromLabel, toLabel, departTime: str('departTime'), arriveTime: str('arriveTime') });
+        if (params.roundTrip === true) {
+          void addTransitRecord({ ...base, fromLabel: toLabel, toLabel: fromLabel, departTime: str('returnDepartTime'), arriveTime: str('returnArriveTime') });
+        }
+        setActivePlannerDayId(dayId);
+        navigate(viewPaths.planner);
+        break;
+      }
     }
   };
   const sendChatMessage = async () => {
@@ -1854,7 +1909,7 @@ function App() {
     return (
       <section className={`panel place-detail-hero${isModal ? " place-detail-modal-card" : ""}`}>
         <div className="place-detail-media-column">
-          <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-detail-image" />
+          <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-detail-image" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} />
           <section className="place-focus-panel">
             <div className="place-focus-panel-head">
               <div>
@@ -2491,10 +2546,12 @@ function App() {
                       const blockClass =
                         entry.kind === "flight" ? `planner-cal-block planner-cal-block--flight planner-cal-block--${entry.phase}`
                         : entry.kind === "hotel" ? "planner-cal-block planner-cal-block--hotel"
+                        : entry.kind === "transit" ? "planner-cal-block planner-cal-block--ride"
                         : `planner-cal-block planner-cal-block--${meta.accentClass}`;
                       const title =
                         entry.kind === "flight" ? `${entry.phase === "outbound" ? "✈️ טיסת יציאה" : "🛬 טיסת חזרה"}${entry.flight.flightNumber ? ` · ${entry.flight.flightNumber}` : ""}`
                         : entry.kind === "hotel" ? `🏨 ${entry.subKind === "checkin" ? "צ׳ק אין" : "צ׳ק אאוט"} · ${entry.hotel.name}`
+                        : entry.kind === "transit" ? `🚆 ${entry.transit.fromLabel} ← ${entry.transit.toLabel}${entry.transit.line ? ` · ${entry.transit.line}` : ""}${entry.transit.cost ? ` · ${entry.transit.cost}` : ""}`
                         : entry.place.name;
                       const isShort = height < 52;
                       const clickable = entry.kind === "place";
@@ -2512,7 +2569,7 @@ function App() {
                       return [
                         transitNode,
                         <article
-                          key={entry.kind === "flight" ? `cal-flight-${entry.flight.id}` : entry.kind === "hotel" ? `cal-hotel-${entry.subKind}-${entry.hotel.id}` : `cal-place-${entry.place.id}`}
+                          key={entry.kind === "flight" ? `cal-flight-${entry.flight.id}` : entry.kind === "hotel" ? `cal-hotel-${entry.subKind}-${entry.hotel.id}` : entry.kind === "transit" ? `cal-ride-${entry.transit.id}` : `cal-place-${entry.place.id}`}
                           className={`${blockClass}${isShort ? " is-short" : ""}${clickable ? " is-clickable is-draggable" : ""}${isDragging ? " is-dragging" : ""}${isPinned ? " is-pinned" : ""}${photoUrl ? " has-photo" : ""}${entry.kind === "place" && openPlaceMenu === `${day.id}:${entry.place.id}` ? " menu-open" : ""}`}
                           style={{ top: `${top}px`, height: `${height}px`, insetInlineStart: offset, width }}
                           onPointerDown={clickable ? (event) => { if (event.button) return; if ((event.target as HTMLElement).closest(".place-menu-wrap")) return; event.currentTarget.setPointerCapture(event.pointerId); setCalDrag({ dayId: day.id, placeId: entry.place.id, pointerStartY: event.clientY, baseHour: entry.startHour, previewHour: entry.startHour, moved: false }); } : undefined}
@@ -2525,6 +2582,9 @@ function App() {
                         >
                           {photoUrl && <img className="planner-cal-block-img" src={photoUrl} alt="" loading="lazy" draggable={false} onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} />}
                           {entry.kind === "place" && renderPlaceMenu(entry.place)}
+                          {entry.kind === "transit" && (
+                            <button type="button" className="planner-cal-ride-remove" title="הסר נסיעה" onClick={(e) => { e.stopPropagation(); removeTransit(entry.transit.id); }}>✕</button>
+                          )}
                           {isPinned && <span className="planner-cal-pin" title={`מעוגן${pinnedTime ? ` · ${pinnedTime}` : ""}`}>📌</span>}
                           <span className="planner-cal-block-time">{startText}{!isShort ? ` – ${endText}` : ""}</span>
                           <strong className="planner-cal-block-title">{title}</strong>
@@ -2540,7 +2600,7 @@ function App() {
       </article>
     );
   };
-  const tripContext = { places, hotels, dayPlans, tripConfig, flights, visitedIds };
+  const tripContext = { places, hotels, dayPlans, tripConfig, flights, visitedIds, transits };
   const renderTripShellNavigation = () => (
     <>
       <header className="trip-top-bar">
@@ -2684,39 +2744,49 @@ function App() {
               {filteredPlaces.map((place) => {
                 const assignedDayId = assignedDayByPlaceId[place.id] || "";
                 const isPinned = Boolean(pinnedDayByPlaceId[place.id]);
-                return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>;
+                return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" loading="lazy" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>;
               })}
             </section>
           </>
         )}
         {!selectedPlaceId && activeView === "hotel" && (
-          <section>
+          <section className="settings-page">
             <div className="section-head">
-              <div><h2>המלונות שלך</h2><span>מכאן מחושבים המרחקים וזמני ההגעה. אפשר להוסיף כמה מלונות לאורך הטיול.</span></div>
-              <button type="button" onClick={() => { setEditingHotelId(null); setIsEditingHotel(true); }}>הוספת מלון</button>
+              <div>
+                <span className="workspace-eyebrow">Stay</span>
+                <h2>המלונות שלך</h2>
+                <span>מכאן מחושבים המרחקים וזמני ההגעה. אפשר להוסיף כמה מלונות לאורך הטיול.</span>
+              </div>
+              <div className="inline-actions">
+                <button type="button" onClick={() => { setEditingHotelId(null); setIsEditingHotel(true); }}>הוספת מלון</button>
+                <button className="secondary-button" type="button" onClick={applyDefaultHotel}>שימוש במלון הדוגמה</button>
+              </div>
             </div>
-            <button className="secondary-button" type="button" onClick={applyDefaultHotel} style={{ marginBottom: "1rem" }}>שימוש במלון הדוגמה</button>
-            {hotels.length === 0 && <p>עדיין לא נוסף מלון.</p>}
+            {hotels.length === 0 && <p className="settings-empty">עדיין לא נוסף מלון.</p>}
             {hotels.map((h) => (
-              <div key={h.id} className="hotel-status" style={{ marginBottom: "1rem", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem" }}>
+              <div key={h.id} className="hotel-status panel">
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
                     <strong>{h.name}</strong>
-                    <p>{h.address}</p>
-                    {h.checkInDate && <p>🛎 צ׳ק אין: {h.checkInDate}{h.checkInTime ? ` · ${h.checkInTime}` : ""}</p>}
-                    {h.checkOutDate && <p>🚪 צ׳ק אאוט: {h.checkOutDate}{h.checkOutTime ? ` · ${h.checkOutTime}` : ""}</p>}
-                    {h.rating && <p>⭐ {h.rating.toFixed(1)}</p>}
-                    {h.googleMapsUrl && <a href={h.googleMapsUrl} target="_blank" rel="noreferrer">Google Maps</a>}
+                    <p style={{ marginTop: "0.25rem", color: "var(--color-text-muted)" }}>{h.address}</p>
+                    {h.checkInDate && <p style={{ marginTop: "0.25rem", fontSize: "0.9rem" }}>🛎 צ׳ק אין: {h.checkInDate}{h.checkInTime ? ` · ${h.checkInTime}` : ""}</p>}
+                    {h.checkOutDate && <p style={{ marginTop: "0.25rem", fontSize: "0.9rem" }}>🚪 צ׳ק אאוט: {h.checkOutDate}{h.checkOutTime ? ` · ${h.checkOutTime}` : ""}</p>}
+                    {h.rating && <p style={{ marginTop: "0.25rem", fontSize: "0.9rem" }}>⭐ {h.rating.toFixed(1)}</p>}
+                    {h.googleMapsUrl && (
+                      <a href={h.googleMapsUrl} target="_blank" rel="noreferrer" style={{ display: "inline-block", marginTop: "0.5rem", color: "var(--color-accent)", textDecoration: "none", fontWeight: 600 }}>
+                        Google Maps
+                      </a>
+                    )}
                   </div>
                   <div style={{ display: "flex", gap: "0.5rem" }}>
-                    <button type="button" onClick={() => { setEditingHotelId(h.id); setIsEditingHotel(true); }}>✏️</button>
-                    <button type="button" className="danger" onClick={() => setHotels((current) => current.filter((item) => item.id !== h.id))}>🗑</button>
+                    <button type="button" className="secondary-button icon-btn" onClick={() => { setEditingHotelId(h.id); setIsEditingHotel(true); }} aria-label="ערוך מלון">✏️</button>
+                    <button type="button" className="danger icon-btn" onClick={() => setHotels((current) => current.filter((item) => item.id !== h.id))} aria-label="מחק מלון">🗑</button>
                   </div>
                 </div>
               </div>
             ))}
             {isEditingHotel && (
-              <form className="form-layout" style={{ marginTop: "1.5rem" }} onSubmit={handleHotelSubmit}>
+              <form className="form-layout panel" onSubmit={handleHotelSubmit}>
                 <div className="form-stack">
                   <label style={{ fontWeight: 600 }}>חיפוש ב-Google Places</label>
                   <div ref={hotelAutocompleteHostRef} className="google-autocomplete-host" />
@@ -2738,7 +2808,7 @@ function App() {
                 </div>
                 {hotelLookupState === "loading" && <p>מחפש מיקום לפי כתובת...</p>}
                 {hotelLookupState === "error" && <p className="form-message error">לא נמצא מיקום. אפשר לבטל ולהוסיף קו רוחב ואורך ידנית.</p>}
-                <div className="inline-actions">
+                <div className="inline-actions" style={{ marginTop: "1.5rem" }}>
                   <button type="submit">{editingHotelId ? "שמירת שינויים" : "הוספת מלון"}</button>
                   <button className="secondary-button" type="button" onClick={() => { setIsEditingHotel(false); setEditingHotelId(null); }}>ביטול</button>
                 </div>
@@ -2792,6 +2862,7 @@ function App() {
             <section className="planner-stack">
               <div className="section-head">
                 <div>
+                  <span className="workspace-eyebrow">Itinerary</span>
                   <h2>לו"ז לשבוע</h2>
                 </div>
                 <div className="planner-toolbar">
@@ -2864,7 +2935,7 @@ function App() {
                         role="button"
                         tabIndex={0}
                       >
-                        <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" />
+                        <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="planner-place-image" loading="lazy" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} />
                         <div className="planner-place-content">
                           <strong>{place.name}</strong>
                           <p>{place.area || "ללא אזור"} | {place.station || "ללא תחנה"}</p>
@@ -2879,6 +2950,13 @@ function App() {
         })()}
         {!selectedPlaceId && activeView === "settings" && (
           <section className="settings-page">
+            <div className="section-head">
+              <div>
+                <span className="workspace-eyebrow">Settings</span>
+                <h2>הגדרות הטיול</h2>
+                <span>ניהול העדפות, לוחות זמנים, מלונות ופרטי טיסה</span>
+              </div>
+            </div>
             {/* ── Trip info ── */}
             <div className="settings-section panel">
               <div className="settings-section-header">

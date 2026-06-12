@@ -76,6 +76,7 @@ function buildChatSystemPrompt(systemContext) {
     '"mark_visited" — דיווח שביקרו במקום',
     '"edit_place" — שינוי פרטי מקום (שעות, משך ביקור וכו\')',
     '"reschedule" — שינוי בטיסה/מלון שמשפיע על התוכנית',
+    '"add_transit" — הוספת נסיעה מתוזמנת ללו"ז (תחתית/רכבת/אוטובוס/מונית) — כשמבקשים לבדוק איך מגיעים למקום ולהוסיף את הנסיעה ליומן',
     '',
     'params לפי intent:',
     'replan: {"reason":"סיבת השינוי"}',
@@ -83,11 +84,13 @@ function buildChatSystemPrompt(systemContext) {
     'set_time: {"placeName":"שם","time":"HH:MM","dayTitle":"יום X","query":"שם מדויק לחיפוש ב-Google Places","type":"סוג","area":"אזור","addressHint":"כתובת או שכונה אם ידוע","visitDurationMins":90,"shortDescription":"למה שווה להוסיף אם עדיין לא קיים"}',
     'mark_visited: {"placeName":"שם"}',
     'edit_place: {"placeName":"שם","field":"openingHours","value":"ערך חדש"}',
-    '  שדות אפשריים: openingHours, visitDurationMinutes (מספר), entryCost (מספר), shortDescription, area, station, tips (טקסט מופרד בפסיקים)',
+    '  שדות אפשריים: openingHours, visitDurationMinutes (מספר), entryCost (מספר), shortDescription, area, station, tips (טקסט מופרד בפסיקים), aiNotes (מידע חופשי שמצטבר — מתאים לפרטי הגעה, מחירים, המלצות)',
     'reschedule: {"detail":"פרטי השינוי"}',
+    'add_transit: {"fromLabel":"מוצא","toLabel":"יעד","dayTitle":"יום X","departTime":"HH:MM","arriveTime":"HH:MM","mode":"רכבת תחתית","line":"District","cost":"6-18 ליש\\"ט","notes":"הערות","roundTrip":true,"returnDepartTime":"HH:MM","returnArriveTime":"HH:MM"}',
+    '  לפני שאתה מחזיר add_transit — חפש באינטרנט את לוח הזמנים והעלות האמיתיים לאותו יום ושעה, ומלא את הפרמטרים מהממצאים. אם המשתמש רוצה גם חזור — מלא roundTrip ושדות ה-return',
     '',
     'steps אפשריים (החזר מערך steps עבור כל intent שאינו info):',
-    'check_place_exists, search_google_places, add_place_if_missing, save_place, move_place_to_day, pin_place_time, open_flight_editor, recompute_plan, mark_place_visited, update_place_field',
+    'check_place_exists, search_google_places, add_place_if_missing, save_place, move_place_to_day, pin_place_time, open_flight_editor, recompute_plan, mark_place_visited, update_place_field, save_transit',
     'דוגמאות:',
     'replan -> ["recompute_plan"]',
     'add_place -> ["search_google_places","save_place"]',
@@ -95,6 +98,7 @@ function buildChatSystemPrompt(systemContext) {
     'mark_visited -> ["mark_place_visited"]',
     'edit_place -> ["update_place_field"]',
     'reschedule -> ["open_flight_editor","recompute_plan"]',
+    'add_transit -> ["save_transit"]',
     '',
     'עקרונות תכנון כשאתה ממליץ או עונה על שאלות:',
     '- לחלק מהמקומות יש שדה aiNotes — מידע שהמשתמש או מחקר אינטרנט הוסיפו (מחירים, המלצות הגעה, התאמה לילדים). תמיד התחשב בו',
@@ -181,7 +185,7 @@ function parseAiResponse(rawText) {
   return { reply: rawText, intent: 'info', params: {}, steps: [] };
 }
 
-function buildTripContext({ places, hotel, hotels, dayPlans, tripConfig, flights, visitedIds }) {
+function buildTripContext({ places, hotel, hotels, dayPlans, tripConfig, flights, visitedIds, transits }) {
   const visitedSet = new Set(visitedIds || []);
   const destination = tripConfig?.destination || 'יעד לא הוגדר';
   const sortedFlights = sortFlightsChronologically(flights || []);
@@ -247,6 +251,9 @@ function buildTripContext({ places, hotel, hotels, dayPlans, tripConfig, flights
     '',
     '## טיסות',
     flightsInfo.length ? JSON.stringify(flightsInfo, null, 2) : 'לא הוזנו טיסות',
+    '',
+    '## נסיעות מתוזמנות (transits — עוגנים נעולים בתוך הימים)',
+    (transits || []).length ? JSON.stringify(transits, null, 2) : 'אין נסיעות מתוזמנות',
     '',
     `## המקומות (${placesInfo.length} סה"כ)`,
     JSON.stringify(placesInfo, null, 2),

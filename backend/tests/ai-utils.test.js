@@ -14,11 +14,11 @@ const FIXTURES = JSON.parse(
 
 // Mirrors of the frontend contract (src/ChatPage.tsx) — if these change there,
 // the AI prompt and these tests must change together.
-const ACTIONABLE_INTENTS = ['replan', 'add_place', 'set_time', 'mark_visited', 'edit_place', 'reschedule'];
+const ACTIONABLE_INTENTS = ['replan', 'add_place', 'set_time', 'mark_visited', 'edit_place', 'reschedule', 'add_transit'];
 const ALLOWED_STEP_IDS = [
   'check_place_exists', 'search_google_places', 'add_place_if_missing', 'save_place',
   'move_place_to_day', 'pin_place_time', 'open_flight_editor', 'recompute_plan',
-  'mark_place_visited', 'update_place_field',
+  'mark_place_visited', 'update_place_field', 'save_transit',
 ];
 const REQUIRED_PARAMS_BY_INTENT = {
   add_place: ['name', 'query'],
@@ -138,6 +138,19 @@ test('chat system prompt includes all intents and planning principles', () => {
   assert.ok(prompt.includes('שתי מסעדות לאותה ארוחה'), 'meal duplication principle missing');
   assert.ok(prompt.includes('זמני נסיעה'), 'transport principle missing');
   assert.ok(prompt.endsWith('CONTEXT'), 'trip context must close the prompt');
+});
+
+test('add_transit intent: prompt contract + transits in trip context', () => {
+  const prompt = buildChatSystemPrompt('CONTEXT');
+  assert.ok(prompt.includes('"add_transit"'), 'add_transit intent must be described');
+  assert.ok(prompt.includes('save_transit'), 'save_transit step must be listed');
+  assert.ok(prompt.includes('roundTrip'), 'round-trip params must be documented');
+  const context = buildTripContext({
+    places: [], hotels: [], dayPlans: [], tripConfig: {}, flights: [], visitedIds: [],
+    transits: [{ id: 't1', dayId: 'day-6', fromLabel: 'Victoria', toLabel: 'Wimbledon Park', departTime: '10:30', arriveTime: '10:55', mode: 'רכבת תחתית', line: 'District', cost: '6-18 ליש"ט', notes: '' }],
+  });
+  assert.ok(context.includes('נסיעות מתוזמנות'), 'transits section must exist in context');
+  assert.ok(context.includes('Wimbledon Park'), 'transit data must appear in context');
 });
 
 test('event place type: locked-anchor rule in prompt + default duration', () => {
