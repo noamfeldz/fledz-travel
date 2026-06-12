@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 
-const { parseAiResponse, buildChatSystemPrompt, buildTripContext, buildPlaceEnrichmentPrompt } = require('../ai-utils');
+const { parseAiResponse, buildChatSystemPrompt, buildTripContext, buildPlaceEnrichmentPrompt, defaultDurationByType } = require('../ai-utils');
 
 const FIXTURES = JSON.parse(
   fs.readFileSync(path.join(__dirname, 'fixtures', 'chat-intent-responses.json'), 'utf8'),
@@ -138,6 +138,14 @@ test('chat system prompt includes all intents and planning principles', () => {
   assert.ok(prompt.includes('שתי מסעדות לאותה ארוחה'), 'meal duplication principle missing');
   assert.ok(prompt.includes('זמני נסיעה'), 'transport principle missing');
   assert.ok(prompt.endsWith('CONTEXT'), 'trip context must close the prompt');
+});
+
+test('event place type: locked-anchor rule in prompt + default duration', () => {
+  const prompt = buildChatSystemPrompt('CONTEXT');
+  assert.ok(prompt.includes('"אירוע"'), 'event type must be a valid type value');
+  assert.ok(prompt.includes('עוגן בשעה נעולה'), 'event locked-anchor rule missing');
+  assert.ok(prompt.includes('set_time'), 'events must route through set_time');
+  assert.equal(defaultDurationByType('אירוע'), 180);
 });
 
 // ── aiNotes: enrichment prompt + context inclusion ───────────────────────────

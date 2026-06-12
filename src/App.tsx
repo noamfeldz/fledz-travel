@@ -10,11 +10,11 @@ import ChatPage from "./ChatPage";
 import type { AiPlanResult as ChatAiPlanResult } from "./ChatPage";
 import { deriveLocationBias, importPlacesLibrary } from "./googleMapsLoader";
 
-type PlaceType = "אטרקציה" | "מוזיאון" | "פארק" | "אוכל" | "ילדים";
+type PlaceType = "אטרקציה" | "מוזיאון" | "פארק" | "אוכל" | "ילדים" | "אירוע";
 type TransportMode = "הליכה" | "אוטובוס" | "רכבת תחתית" | "שילוב";
 type ViewKey = "home" | "hotel" | "map" | "planner" | "chat" | "settings";
 type Place = { id: string; name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; rating?: number; tips: string[]; imageUrl: string; sourceUrl?: string; instagramUrl?: string; station?: string; lat: number; lng: number; websiteUrl?: string; phoneNumber?: string; googleMapsUrl?: string; googlePlaceId?: string; businessStatus?: string; priority?: number; visitDurationMinutes?: number; entryCost?: number; aiNotes?: string; };
-type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; websiteUrl: string; phoneNumber: string; googleMapsUrl: string; googlePlaceId: string; businessStatus: string; priority: string; visitDurationMinutes: string; entryCost: string; aiNotes: string; };
+type PlaceDraft = { name: string; shortDescription: string; address: string; openingHours: string; type: PlaceType; area: string; imageUrl: string; sourceUrl: string; instagramUrl: string; station: string; tips: string; lat: string; lng: string; websiteUrl: string; phoneNumber: string; googleMapsUrl: string; googlePlaceId: string; businessStatus: string; priority: string; visitDurationMinutes: string; entryCost: string; aiNotes: string; eventDayId: string; eventTime: string; };
 type AddPlaceIntentSeed = { name: string; query: string; type?: PlaceType; area?: string; addressHint?: string; visitDurationMinutes?: number; shortDescription?: string; };
 type PendingPinRequest = AddPlaceIntentSeed & { dayTitle?: string; time?: string; };
 type PlaceSearchCandidate = {
@@ -73,7 +73,7 @@ async function apiFetch(path: string, options?: RequestInit) {
 }
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const defaultPlaceImage = "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80";
-const emptyPlaceDraft: PlaceDraft = { name: "", shortDescription: "", address: "", openingHours: "", type: "אטרקציה", area: "", imageUrl: "", sourceUrl: "", instagramUrl: "", station: "", tips: "", lat: "", lng: "", websiteUrl: "", phoneNumber: "", googleMapsUrl: "", googlePlaceId: "", businessStatus: "", priority: "3", visitDurationMinutes: "", entryCost: "", aiNotes: "" };
+const emptyPlaceDraft: PlaceDraft = { name: "", shortDescription: "", address: "", openingHours: "", type: "אטרקציה", area: "", imageUrl: "", sourceUrl: "", instagramUrl: "", station: "", tips: "", lat: "", lng: "", websiteUrl: "", phoneNumber: "", googleMapsUrl: "", googlePlaceId: "", businessStatus: "", priority: "3", visitDurationMinutes: "", entryCost: "", aiNotes: "", eventDayId: "", eventTime: "" };
 const emptyHotelDraft: HotelDraft = { name: "", address: "", lat: "", lng: "", checkInDate: "", checkInTime: "", checkOutDate: "", checkOutTime: "", imageUrl: "", googlePlaceId: "", googleMapsUrl: "", websiteUrl: "", phoneNumber: "", rating: "" };
 const defaultTripConfig: TripConfig = { tripName: "הטיול שלנו", dayStartHour: 9, dayEndHour: 21, lunchBreakStart: 13, lunchBreakEnd: 15, destination: "", startDate: "", numDays: 7 };
 const defaultHotel: Hotel = { id: "default-hotel", name: "Park Plaza Victoria London", address: "239 Vauxhall Bridge Road, London SW1V 1EQ", lat: 51.4952, lng: -0.1439 };
@@ -133,7 +133,7 @@ const seededPlaces: Place[] = [
   { id: "natural-history", name: "Natural History Museum", shortDescription: "מוזיאון מפורסם עם תצוגות דינוזאורים, חלל וטבע.", address: "Cromwell Rd, South Kensington, London SW7 5BD", openingHours: "10:00-17:50", type: "מוזיאון", area: "South Kensington", rating: 4.8, tips: ["פופולרי מאוד למשפחות", "שווה להגיע מוקדם", "חינם ברוב הימים"], imageUrl: "https://images.unsplash.com/photo-1566127444979-b3d2b654e3d7?auto=format&fit=crop&w=1200&q=80", sourceUrl: "https://www.nhm.ac.uk/", instagramUrl: "https://www.instagram.com/explore/tags/naturalhistorymuseum/", station: "South Kensington", lat: 51.4967, lng: -0.1764 },
   { id: "camden-market", name: "Camden Market", shortDescription: "אזור שוק תוסס עם אוכל, חנויות, מוזיקה ואווירה צעירה.", address: "Camden Lock Pl, London NW1 8AF", openingHours: "10:00-18:00", type: "אוכל", area: "Camden", rating: 4.6, tips: ["מעולה לצהריים", "אפשר לשלב עם Regent's Canal", "עמוס בסופי שבוע"], imageUrl: "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?auto=format&fit=crop&w=1200&q=80", sourceUrl: "https://www.camdenmarket.com/", instagramUrl: "https://www.instagram.com/explore/tags/camdenmarket/", station: "Camden Town", lat: 51.5416, lng: -0.1455 },
 ];
-const placeTypes: PlaceType[] = ["אטרקציה", "מוזיאון", "פארק", "אוכל", "ילדים"];
+const placeTypes: PlaceType[] = ["אטרקציה", "מוזיאון", "פארק", "אוכל", "ילדים", "אירוע"];
 function normalizeIntentPlaceType(value: unknown): PlaceType | undefined {
   if (typeof value !== "string") return undefined;
   const raw = value.trim();
@@ -144,6 +144,7 @@ function normalizeIntentPlaceType(value: unknown): PlaceType | undefined {
   if (raw === "פארק" || normalized === "park") return "פארק";
   if (raw === "אוכל" || normalized === "food" || normalized === "restaurant" || normalized === "cafe") return "אוכל";
   if (raw === "ילדים" || normalized === "kids" || normalized === "children" || normalized === "family") return "ילדים";
+  if (raw === "אירוע" || normalized === "event" || normalized === "concert" || normalized === "show" || normalized === "match" || normalized === "game") return "אירוע";
   return undefined;
 }
 function parseIntentVisitDuration(value: unknown) {
@@ -247,6 +248,7 @@ const placeTypeMeta: Record<string, { emoji: string; cls: string }> = {
   "פארק":     { emoji: "🌳", cls: "chip--park" },
   "אוכל":     { emoji: "🍽️", cls: "chip--food" },
   "ילדים":    { emoji: "🎠", cls: "chip--kids" },
+  "אירוע":    { emoji: "🎫", cls: "chip--event" },
 };
 function TypeChip({ type }: { type: string }) {
   const meta = placeTypeMeta[type];
@@ -279,6 +281,7 @@ const mapMarkerMeta: Record<MapMarkerKind, { glyph: string; label: string; color
   "פארק": { glyph: "🌳", label: "פארק", color: "#059669", accent: "#d1fae5" },
   "אוכל": { glyph: "🍽️", label: "אוכל", color: "#dc2626", accent: "#fee2e2" },
   "ילדים": { glyph: "🎠", label: "ילדים", color: "#ea580c", accent: "#ffedd5" },
+  "אירוע": { glyph: "🎫", label: "אירוע", color: "#db2777", accent: "#fce7f3" },
 };
 const markerIconCache = new Map<MapMarkerKind, L.DivIcon>();
 function createMarkerIcon(kind: MapMarkerKind) {
@@ -316,6 +319,7 @@ function getVisitDurationHours(type: PlaceType, visitDurationMinutes?: number) {
     case "פארק": return 1.5;
     case "אוכל": return 1.25;
     case "ילדים": return 2;
+    case "אירוע": return 3;
     default: return 2;
   }
 }
@@ -331,14 +335,6 @@ function formatHourLabel(hour: number) {
   const safeHours = `${wholeHours}`.padStart(2, "0");
   const safeMinutes = `${minutes}`.padStart(2, "0");
   return `${safeHours}:${safeMinutes}`;
-}
-function formatGapDuration(totalMinutes: number) {
-  const minutes = Math.max(0, Math.round(totalMinutes));
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  if (hours && mins) return `${hours} ש׳ ${mins} דק׳`;
-  if (hours) return `${hours} ש׳`;
-  return `${mins} דק׳`;
 }
 // Format an hour value snapped to half-hours as a clock string for pinned times.
 function formatClockHalf(hour: number) {
@@ -388,12 +384,6 @@ function formatPlannerChipDate(startDate: string | null | undefined, offset: num
   const [year, month, day] = dateKey.split("-");
   if (!year || !month || !day) return null;
   return `${day}/${month}`;
-}
-function getTimelineSpanHeight(durationMinutes: number) {
-  const minHeight = 78;
-  const maxHeight = 220;
-  const scaledHeight = Math.round((Math.max(durationMinutes, 45) / 60) * 48);
-  return Math.max(minHeight, Math.min(maxHeight, scaledHeight));
 }
 const CALENDAR_PX_PER_HOUR = 60;
 const CALENDAR_MIN_BLOCK_PX = 34;
@@ -479,14 +469,18 @@ function buildPlannerDayFlightContext(dayIndex: number, dayCount: number, day: D
     const transferHours = Math.max(0, flight.transferMinutes || 0) / 60;
 
     if (phase === "outbound") {
-      const postFlightStartHour = (arrivalHour ?? flightHour) + transferHours;
+      // On the destination's day calendar the outbound flight should appear when it
+      // *lands*, not at the (other-timezone) departure time — otherwise the block
+      // stretches across hours that aren't part of the destination day at all.
+      const landingHour = arrivalHour ?? flightHour;
+      const postFlightStartHour = landingHour + transferHours;
       availableStartHour = Math.max(availableStartHour, postFlightStartHour);
       return {
         flight,
         phase,
-        startHour: flightHour,
-        endHour: Math.max(flightHour, postFlightStartHour),
-        dayPart: getDayPartLabel(flightHour),
+        startHour: landingHour,
+        endHour: Math.max(landingHour, postFlightStartHour),
+        dayPart: getDayPartLabel(landingHour),
       };
     }
 
@@ -522,6 +516,7 @@ function getPlannerPlaceTone(place: Place, dayPart: string) {
   if (place.type === "פארק" && dayPart === "בוקר") return "פתיחה רגועה";
   if (place.type === "מוזיאון") return dayPart === "בוקר" ? "מוזיאון בוקר" : "תחנת תרבות";
   if (place.type === "ילדים") return "פעילות משפחתית";
+  if (place.type === "אירוע") return "אירוע בשעה קבועה";
   if (place.type === "אטרקציה" && dayPart === "ערב") return "אטרקציית ערב";
   return `${dayPart} של ${place.type}`;
 }
@@ -764,7 +759,7 @@ function autoDistributeWeek(dayPlans: DayPlan[], places: Place[], hotel: Hotel, 
 }
 async function geocodeAddress(address: string) { const encoded = encodeURIComponent(address); const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encoded}`, { headers: { Accept: "application/json" } }); if (!response.ok) throw new Error("failed"); const data = (await response.json()) as Array<{ lat: string; lon: string }>; if (!data.length) throw new Error("not-found"); return { lat: Number(data[0].lat), lng: Number(data[0].lon) }; }
 function buildPlaceId(name: string) { return `${name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "place"}-${Date.now()}`; }
-function placeToDraft(place: Place): PlaceDraft { return { name: place.name, shortDescription: place.shortDescription, address: place.address, openingHours: place.openingHours, type: place.type, area: place.area, imageUrl: place.imageUrl === defaultPlaceImage ? "" : place.imageUrl, sourceUrl: place.sourceUrl || "", instagramUrl: place.instagramUrl || "", station: place.station || "", tips: place.tips.join(", "), lat: String(place.lat), lng: String(place.lng), websiteUrl: place.websiteUrl || "", phoneNumber: place.phoneNumber || "", googleMapsUrl: place.googleMapsUrl || "", googlePlaceId: place.googlePlaceId || "", businessStatus: place.businessStatus || "", priority: String(place.priority ?? 3), visitDurationMinutes: place.visitDurationMinutes ? String(place.visitDurationMinutes) : "", entryCost: place.entryCost != null ? String(place.entryCost) : "", aiNotes: place.aiNotes || "" }; }
+function placeToDraft(place: Place): PlaceDraft { return { name: place.name, shortDescription: place.shortDescription, address: place.address, openingHours: place.openingHours, type: place.type, area: place.area, imageUrl: place.imageUrl === defaultPlaceImage ? "" : place.imageUrl, sourceUrl: place.sourceUrl || "", instagramUrl: place.instagramUrl || "", station: place.station || "", tips: place.tips.join(", "), lat: String(place.lat), lng: String(place.lng), websiteUrl: place.websiteUrl || "", phoneNumber: place.phoneNumber || "", googleMapsUrl: place.googleMapsUrl || "", googlePlaceId: place.googlePlaceId || "", businessStatus: place.businessStatus || "", priority: String(place.priority ?? 3), visitDurationMinutes: place.visitDurationMinutes ? String(place.visitDurationMinutes) : "", entryCost: place.entryCost != null ? String(place.entryCost) : "", aiNotes: place.aiNotes || "", eventDayId: "", eventTime: "" }; }
 function formatCoordinate(value: number) { return String(Number(value.toFixed(6))); }
 function decodeLinkText(value: string) { return decodeURIComponent(value).replace(/\+/g, " ").replace(/[_-]+/g, " ").trim(); }
 function extractCoordinatesFromText(value: string) { const atMatch = value.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/); if (atMatch) return { lat: Number(atMatch[1]), lng: Number(atMatch[2]) }; const markerMatch = value.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/); if (markerMatch) return { lat: Number(markerMatch[1]), lng: Number(markerMatch[2]) }; return null; }
@@ -911,6 +906,7 @@ function App() {
   const [hotelLookupState, setHotelLookupState] = useState<"idle" | "loading" | "error" | "done">("idle");
   const [placeDraft, setPlaceDraft] = useState<PlaceDraft>(emptyPlaceDraft);
   const [editingPlaceId, setEditingPlaceId] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [placeFormState, setPlaceFormState] = useState<{ tone: "idle" | "loading" | "success" | "error"; message: string }>({ tone: "idle", message: "" });
   const [enrichingPlaceIds, setEnrichingPlaceIds] = useState<Set<string>>(new Set());
   const [enrichErrors, setEnrichErrors] = useState<Record<string, string>>({});
@@ -951,7 +947,6 @@ function App() {
   useEffect(() => { if (!openPlaceMenu) return; const close = () => setOpenPlaceMenu(null); document.addEventListener("click", close); return () => document.removeEventListener("click", close); }, [openPlaceMenu]);
   const [openDayMenu, setOpenDayMenu] = useState<string | null>(null);
   const [activePlannerDayId, setActivePlannerDayId] = useState<string | null>(null);
-  const [plannerViewMode] = useState<"cards" | "calendar">("calendar");
   const [calDrag, setCalDrag] = useState<{ dayId: string; placeId: string; pointerStartY: number; baseHour: number; previewHour: number; moved: boolean } | null>(null);
   const plannerDayRefs = useRef<Record<string, HTMLElement | null>>({});
   useEffect(() => { if (!openDayMenu) return; const close = () => setOpenDayMenu(null); document.addEventListener("click", close); return () => document.removeEventListener("click", close); }, [openDayMenu]);
@@ -1555,12 +1550,20 @@ function App() {
     const existingPlace = editingPlaceId ? places.find((place) => place.id === editingPlaceId) : undefined;
     const nextPlace: Place = { id: existingPlace?.id || buildPlaceId(name), name, shortDescription: draft.shortDescription.trim(), address, openingHours: draft.openingHours.trim(), type: draft.type, area: draft.area.trim(), rating: existingPlace?.rating, tips: draft.tips.split(",").map((item) => item.trim()).filter(Boolean), imageUrl: draft.imageUrl.trim() || existingPlace?.imageUrl || defaultPlaceImage, sourceUrl: draft.sourceUrl.trim() || undefined, instagramUrl: draft.instagramUrl.trim() || undefined, station: draft.station.trim() || undefined, lat, lng, websiteUrl: draft.websiteUrl.trim() || existingPlace?.websiteUrl || undefined, phoneNumber: draft.phoneNumber.trim() || existingPlace?.phoneNumber || undefined, googleMapsUrl: draft.googleMapsUrl.trim() || existingPlace?.googleMapsUrl || undefined, googlePlaceId: draft.googlePlaceId.trim() || existingPlace?.googlePlaceId || undefined, businessStatus: draft.businessStatus.trim() || existingPlace?.businessStatus || undefined, priority: draft.priority ? Number(draft.priority) : 3, visitDurationMinutes: draft.visitDurationMinutes ? Number(draft.visitDurationMinutes) : undefined, entryCost: draft.entryCost !== "" ? Number(draft.entryCost) : undefined, aiNotes: draft.aiNotes.trim() || existingPlace?.aiNotes || undefined };
     const pendingPin = !editingPlaceId ? (pendingPinOverride ?? pendingPinRequest) : null;
+    // Event places get pinned to their day+time straight from the form
+    const eventPin = !editingPlaceId && draft.type === "אירוע" && draft.eventDayId ? { dayId: draft.eventDayId, time: draft.eventTime.trim() } : null;
     setPlaces((current) => editingPlaceId ? current.map((place) => place.id === editingPlaceId ? nextPlace : place) : [nextPlace, ...current]);
     apiFetch(`${apiBase}/places`, { method: "POST", body: JSON.stringify(nextPlace) }).catch(() => {});
     setPlaceFormState({ tone: "success", message: editingPlaceId ? "השינויים נשמרו." : "המקום נוסף לרשימה." });
     setLinkImportState({ tone: "idle", message: "" });
     if (editingPlaceId) { resetPlaceEditor(); navigate(getPlacePath(nextPlace.id, tripId)); }
     else if (pendingPin && applyPendingPinToPlace(nextPlace, pendingPin)) { resetPlaceEditor(); setIsAddingPlace(false); }
+    else if (eventPin) {
+      addPlaceToDay(eventPin.dayId, nextPlace.id, { pinOnAssign: true });
+      setPinWithTime(eventPin.dayId, nextPlace.id, eventPin.time);
+      setActivePlannerDayId(eventPin.dayId);
+      resetPlaceEditor(); setIsAddingPlace(false); navigate(viewPaths.planner);
+    }
     else { resetPlaceEditor(); setIsAddingPlace(false); navigate(getPlacePath(nextPlace.id, tripId)); }
     return true;
   }
@@ -1797,6 +1800,12 @@ function App() {
           <label>כתובת<input value={placeDraft.address} onChange={(event) => updatePlaceDraft("address", event.target.value)} /></label>
           <label>שעות פתיחה<input value={placeDraft.openingHours} onChange={(event) => updatePlaceDraft("openingHours", event.target.value)} placeholder="לדוגמה 10:00-18:00" /></label>
           <label>סוג<select value={placeDraft.type} onChange={(event) => updatePlaceDraft("type", event.target.value as PlaceType)}>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+          {placeDraft.type === "אירוע" && !editingPlaceId && (
+            <>
+              <label>יום האירוע<select value={placeDraft.eventDayId} onChange={(event) => updatePlaceDraft("eventDayId", event.target.value)}><option value="">בחר יום (יעוגן אוטומטית)</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></label>
+              <label>שעת האירוע<input type="time" value={placeDraft.eventTime} onChange={(event) => updatePlaceDraft("eventTime", event.target.value)} /></label>
+            </>
+          )}
           <label>אזור<input value={placeDraft.area} onChange={(event) => updatePlaceDraft("area", event.target.value)} /></label>
           <label>תחנה קרובה<input value={placeDraft.station} onChange={(event) => updatePlaceDraft("station", event.target.value)} /></label>
           <label>תמונה<input value={placeDraft.imageUrl} onChange={(event) => updatePlaceDraft("imageUrl", event.target.value)} /></label>
@@ -1830,6 +1839,18 @@ function App() {
       .map((item) => ({ place: item, distanceKm: haversineKm(place, item) }))
       .sort((left, right) => left.distanceKm - right.distanceKm)
       .slice(0, 3);
+
+    const getPlaceTypeClass = (t: PlaceType) => {
+      switch (t) {
+        case "אטרקציה": return "attraction";
+        case "מוזיאון": return "museum";
+        case "פארק": return "park";
+        case "אוכל": return "food";
+        case "ילדים": return "kids";
+        default: return "attraction";
+      }
+    };
+
     return (
       <section className={`panel place-detail-hero${isModal ? " place-detail-modal-card" : ""}`}>
         <div className="place-detail-media-column">
@@ -1863,82 +1884,468 @@ function App() {
             )}
           </section>
         </div>
-        <div className="place-detail-content">
-          <div className="section-head place-detail-head">
-            <div><h2>{place.name}</h2></div>
-            <div className="place-detail-actions">
-              <div className="place-menu-wrap place-detail-menu-wrap">
-                <button
-                  className="place-menu-btn"
-                  type="button"
-                  aria-label="אפשרויות מקום"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setOpenPlaceMenu((prev) => prev === detailMenuKey ? null : detailMenuKey);
-                  }}
-                  onKeyDown={stopEventPropagation}
-                >
-                  ⋯
-                </button>
-                {openPlaceMenu === detailMenuKey && (
-                  <div className="place-context-menu" onClick={(event) => event.stopPropagation()}>
-                    <button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button>
-                    <button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button>
-                    <button type="button" disabled title="בקרוב">🔗 שיתוף בקרוב</button>
-                  </div>
-                )}
-              </div>
-              {isModal && <button className="secondary-button" type="button" onClick={options?.onClose}>סגירה</button>}
-            </div>
-          </div>
-          {isModal && <div className="inline-actions"><button className="secondary-button" type="button" onClick={() => { closePlaceModal(); navigate(getPlacePath(place.id, tripId)); }}>עמוד מלא</button></div>}
-          {isEditingThisPlace ? (
-            <div className="place-detail-editor">
-              {renderPlaceFormBody("שמירת שינויים", stopEditingPlace, { inline: true, showImportTools: false })}
-            </div>
-          ) : (
-            <>
-              <dl className="detail-grid">
-                <div><dt>כתובת</dt><dd>{place.address}</dd></div>
-                <div><dt>שיבוץ במסלול</dt><dd>{assignedDay ? `${assignedDay.title}${pinnedDay ? " · מעוגן" : ""}${pinnedTime ? ` · ${pinnedTime}` : ""}` : "עדיין לא שובץ"}</dd></div>
-                <div><dt>שעות פתיחה</dt><dd>{place.openingHours || "לא הוזן"}</dd></div>
-                <div><dt>תחנה קרובה</dt><dd>{place.station || "לא הוזן"}</dd></div>
-                <div><dt>דירוג</dt><dd>{place.rating ? place.rating.toFixed(1) : "חדש"}</dd></div>
-                <div><dt>טלפון</dt><dd>{place.phoneNumber || "לא הוזן"}</dd></div>
-                <div><dt>אתר</dt><dd>{place.websiteUrl ? <a href={place.websiteUrl} target="_blank" rel="noreferrer">פתיחת אתר</a> : "לא הוזן"}</dd></div>
-                <div><dt>Google Maps</dt><dd>{place.googleMapsUrl ? <a href={place.googleMapsUrl} target="_blank" rel="noreferrer">פתיחה בגוגל מפות</a> : "לא הוזן"}</dd></div>
-                <div><dt>סטטוס</dt><dd>{place.businessStatus || "לא הוזן"}</dd></div>
-                <div><dt>מרחק מהמלון</dt><dd>{formatDistance(haversineKm(hotels[0] ?? defaultHotel, place))}</dd></div>
-                <div><dt>הגעה משוערת</dt><dd>{transport.mode} | {transport.minutes} דק'</dd></div>
-                <div><dt>קו רוחב</dt><dd>{place.lat.toFixed(5)}</dd></div>
-                <div><dt>קו אורך</dt><dd>{place.lng.toFixed(5)}</dd></div>
-              </dl>
-              <section className="sub-panel ai-notes-panel">
-                <div className="ai-notes-head">
-                  <h3>🔮 מידע ל-AI</h3>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={enrichingPlaceIds.has(place.id)}
-                    onClick={() => enrichPlace(place.id)}
+
+        {isEditingThisPlace ? (
+          <form className="place-detail-content" onSubmit={handlePlaceSubmit}>
+            <div className="place-detail-head-wrapper">
+              <div className="location-header-meta" style={{ width: "100%", gap: "0.5rem" }}>
+                <div className="editable-field-group" style={{ width: "auto" }}>
+                  <label>סוג</label>
+                  <select
+                    className="inline-edit-input inline-edit-select"
+                    value={placeDraft.type}
+                    onChange={(e) => updatePlaceDraft("type", e.target.value as PlaceType)}
                   >
-                    {enrichingPlaceIds.has(place.id) ? "⏳ שולף מידע מהאינטרנט..." : place.aiNotes ? "🔄 רענן מידע" : "🔮 שלוף מידע עדכני"}
-                  </button>
+                    {placeTypes.map((type) => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
                 </div>
-                {enrichErrors[place.id] && <p className="form-message error">{enrichErrors[place.id]}</p>}
-                {place.aiNotes ? (
-                  <div className="ai-notes-content">
-                    {place.aiNotes.split("\n").filter(Boolean).map((line, index) => <p key={index}>{line}</p>)}
+                <div className="editable-field-group" style={{ flex: 1 }}>
+                  <label>אזור / שכונה</label>
+                  <input
+                    className="inline-edit-input"
+                    value={placeDraft.area}
+                    onChange={(e) => updatePlaceDraft("area", e.target.value)}
+                    placeholder="לדוגמה: Covent Garden"
+                  />
+                </div>
+              </div>
+              
+              <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                <div className="editable-field-group">
+                  <label>שם המקום</label>
+                  <input
+                    className="inline-edit-input title-input"
+                    value={placeDraft.name}
+                    onChange={(e) => updatePlaceDraft("name", e.target.value)}
+                    placeholder="שם המקום"
+                  />
+                </div>
+                
+                <div className="editable-field-group">
+                  <label>תיאור קצר</label>
+                  <textarea
+                    className="inline-edit-input inline-edit-textarea"
+                    value={placeDraft.shortDescription}
+                    onChange={(e) => updatePlaceDraft("shortDescription", e.target.value)}
+                    placeholder="תיאור קצר של המקום"
+                    rows={3}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="location-info-grid">
+              <div className="info-card">
+                <span className="info-card-icon">📍</span>
+                <div className="info-card-text">
+                  <span className="info-card-label">כתובת</span>
+                  <input
+                    className="inline-edit-input"
+                    value={placeDraft.address}
+                    onChange={(e) => updatePlaceDraft("address", e.target.value)}
+                    placeholder="כתובת מלאה"
+                  />
+                </div>
+              </div>
+              <div className="info-card">
+                <span className="info-card-icon">🕒</span>
+                <div className="info-card-text">
+                  <span className="info-card-label">שעות פתיחה</span>
+                  <input
+                    className="inline-edit-input"
+                    value={placeDraft.openingHours}
+                    onChange={(e) => updatePlaceDraft("openingHours", e.target.value)}
+                    placeholder="לדוגמה: 10:00-18:00"
+                  />
+                </div>
+              </div>
+              <div className="info-card">
+                <span className="info-card-icon">🚇</span>
+                <div className="info-card-text">
+                  <span className="info-card-label">תחנה קרובה</span>
+                  <input
+                    className="inline-edit-input"
+                    value={placeDraft.station}
+                    onChange={(e) => updatePlaceDraft("station", e.target.value)}
+                    placeholder="תחנה קרובה"
+                  />
+                </div>
+              </div>
+              <div className="info-card">
+                <span className="info-card-icon">💳</span>
+                <div className="info-card-text">
+                  <span className="info-card-label">עלות וזמן ביקור</span>
+                  <div style={{ display: "flex", gap: "0.5rem", width: "100%" }}>
+                    <input
+                      type="number"
+                      className="inline-edit-input"
+                      value={placeDraft.entryCost}
+                      onChange={(e) => updatePlaceDraft("entryCost", e.target.value)}
+                      placeholder="עלות (₪)"
+                      style={{ width: "50%" }}
+                    />
+                    <input
+                      type="number"
+                      className="inline-edit-input"
+                      value={placeDraft.visitDurationMinutes}
+                      onChange={(e) => updatePlaceDraft("visitDurationMinutes", e.target.value)}
+                      placeholder="זמן (דק')"
+                      style={{ width: "50%" }}
+                    />
                   </div>
-                ) : (
-                  <p className="ai-notes-empty">מחירים, מתי כדאי להגיע, התאמה לילדים והערות לעונה — שליפה אוטומטית מהאינטרנט או הוספה ידנית דרך עריכה. ה-AI מתחשב במידע הזה בתכנון.</p>
-                )}
+                </div>
+              </div>
+            </div>
+
+            <div className="advanced-accordion">
+              <button
+                type="button"
+                className="advanced-accordion-trigger"
+                onClick={() => setAdvancedOpen(!advancedOpen)}
+              >
+                <span>⚙️ הגדרות מתקדמות ומיקומים קואורדינטות</span>
+                <span>{advancedOpen ? "▲" : "▼"}</span>
+              </button>
+              {advancedOpen && (
+                <div className="advanced-accordion-content">
+                  <div className="editable-field-group">
+                    <label>עדיפות (1-5)</label>
+                    <select
+                      className="inline-edit-input inline-edit-select"
+                      value={placeDraft.priority}
+                      onChange={(e) => updatePlaceDraft("priority", e.target.value)}
+                    >
+                      <option value="1">1 - נמוכה</option>
+                      <option value="2">2</option>
+                      <option value="3">3 - רגילה</option>
+                      <option value="4">4</option>
+                      <option value="5">5 - גבוהה</option>
+                    </select>
+                  </div>
+                  <div className="editable-field-group">
+                    <label>סטטוס פעילות עסק</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.businessStatus}
+                      onChange={(e) => updatePlaceDraft("businessStatus", e.target.value)}
+                      placeholder="לדוגמה: OPERATIONAL"
+                    />
+                  </div>
+                  <div className="editable-field-group">
+                    <label>קו רוחב (Latitude)</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.lat}
+                      onChange={(e) => updatePlaceDraft("lat", e.target.value)}
+                    />
+                  </div>
+                  <div className="editable-field-group">
+                    <label>קו אורך (Longitude)</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.lng}
+                      onChange={(e) => updatePlaceDraft("lng", e.target.value)}
+                    />
+                  </div>
+                  <div className="editable-field-group" style={{ gridColumn: "span 2" }}>
+                    <label>כתובת תמונה (Image URL)</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.imageUrl}
+                      onChange={(e) => updatePlaceDraft("imageUrl", e.target.value)}
+                      placeholder="קישור לתמונה"
+                    />
+                  </div>
+                  <div className="editable-field-group">
+                    <label>קישור Google Maps</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.googleMapsUrl}
+                      onChange={(e) => updatePlaceDraft("googleMapsUrl", e.target.value)}
+                    />
+                  </div>
+                  <div className="editable-field-group">
+                    <label>מזהה Google Place ID</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.googlePlaceId}
+                      onChange={(e) => updatePlaceDraft("googlePlaceId", e.target.value)}
+                    />
+                  </div>
+                  <div className="editable-field-group">
+                    <label>אתר אינטרנט</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.websiteUrl}
+                      onChange={(e) => updatePlaceDraft("websiteUrl", e.target.value)}
+                    />
+                  </div>
+                  <div className="editable-field-group">
+                    <label>טלפון</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.phoneNumber}
+                      onChange={(e) => updatePlaceDraft("phoneNumber", e.target.value)}
+                    />
+                  </div>
+                  <div className="editable-field-group">
+                    <label>קישור אינסטגרם</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.instagramUrl}
+                      onChange={(e) => updatePlaceDraft("instagramUrl", e.target.value)}
+                    />
+                  </div>
+                  <div className="editable-field-group">
+                    <label>קישור מקור</label>
+                    <input
+                      className="inline-edit-input"
+                      value={placeDraft.sourceUrl}
+                      onChange={(e) => updatePlaceDraft("sourceUrl", e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <section className="sub-panel ai-notes-panel" style={{ width: "100%" }}>
+              <div className="ai-notes-head">
+                <h3>🔮 מידע ל-AI</h3>
+              </div>
+              <div className="editable-field-group">
+                <textarea
+                  className="inline-edit-input inline-edit-textarea"
+                  value={placeDraft.aiNotes}
+                  onChange={(e) => updatePlaceDraft("aiNotes", e.target.value)}
+                  rows={4}
+                  placeholder="מחירי כניסה, מתי כדאי להגיע, התאמה לילדים, הערות לעונה — ה-AI מתחשב בזה בתכנון"
+                />
+              </div>
+            </section>
+
+            <section className="sub-panel" style={{ width: "100%" }}>
+              <div className="editable-field-group">
+                <label>💡 טיפים (מופרדים בפסיקים)</label>
+                <input
+                  className="inline-edit-input"
+                  value={placeDraft.tips}
+                  onChange={(e) => updatePlaceDraft("tips", e.target.value)}
+                  placeholder="לדוגמה: להזמין מראש, להגיע בשקיעה"
+                />
+              </div>
+            </section>
+
+            {placeFormState.tone === "error" && <p className="form-message error">{placeFormState.message}</p>}
+            
+            <div className="edit-mode-actions">
+              <button type="submit" className="quick-action-btn active" disabled={placeFormState.tone === "loading"}>
+                {placeFormState.tone === "loading" ? "שומר..." : "שמירת שינויים"}
+              </button>
+              <button type="button" className="quick-action-btn" onClick={stopEditingPlace}>
+                ביטול
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="place-detail-content">
+            <div className="place-detail-head-wrapper">
+              <div className="location-header-meta">
+                <span className={`chip chip--${getPlaceTypeClass(place.type)}`}>{place.type}</span>
+                <span className="location-rating-badge">
+                  ⭐ {place.rating ? place.rating.toFixed(1) : "חדש"}
+                </span>
+                {place.area && <span className="location-area-badge">{place.area}</span>}
+              </div>
+              <div className="section-head place-detail-head" style={{ marginTop: "0.35rem", paddingBottom: "0" }}>
+                <div>
+                  <h2>{place.name}</h2>
+                  {place.shortDescription && <p className="detail-summary">{place.shortDescription}</p>}
+                </div>
+                <div className="place-detail-actions">
+                  <div className="place-menu-wrap place-detail-menu-wrap">
+                    <button
+                      className="place-menu-btn"
+                      type="button"
+                      aria-label="אפשרויות מקום"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenPlaceMenu((prev) => prev === detailMenuKey ? null : detailMenuKey);
+                      }}
+                      onKeyDown={stopEventPropagation}
+                    >
+                      ⋯
+                    </button>
+                    {openPlaceMenu === detailMenuKey && (
+                      <div className="place-context-menu" onClick={(event) => event.stopPropagation()}>
+                        <button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button>
+                        <button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button>
+                        <button type="button" disabled title="בקרוב">🔗 שיתוף בקרוב</button>
+                      </div>
+                    )}
+                  </div>
+                  {isModal && <button className="secondary-button" type="button" onClick={options?.onClose}>סגירה</button>}
+                </div>
+              </div>
+            </div>
+
+            {isModal && (
+              <div className="inline-actions">
+                <button className="secondary-button" type="button" onClick={() => { closePlaceModal(); navigate(getPlacePath(place.id, tripId)); }}>
+                  עמוד מלא
+                </button>
+              </div>
+            )}
+
+            <div className="quick-actions-bar">
+              <div className="quick-action-select-wrapper">
+                <select
+                  className="quick-action-select"
+                  value={assignedDay?.id || ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val) {
+                      addPlaceToDay(val, place.id);
+                    } else {
+                      clearPlaceAssignment(place.id);
+                    }
+                  }}
+                >
+                  <option value="">📅 {assignedDay ? assignedDay.title : "שיוך למסלול..."}</option>
+                  {assignedDay && <option value="">❌ הסרה מהמסלול</option>}
+                  {dayPlans.map((day) => (
+                    <option key={day.id} value={day.id}>
+                      {day.title} {pinnedDayByPlaceId[place.id] && day.id === pinnedDayByPlaceId[place.id] ? "📌" : ""}
+                    </option>
+                  ))}
+                </select>
+                <span className="quick-action-select-icon">▼</span>
+              </div>
+
+              <a
+                className="quick-action-btn"
+                href={place.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place.name + " " + place.address)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                🗺️ מפות
+              </a>
+
+              {place.websiteUrl && (
+                <a className="quick-action-btn" href={place.websiteUrl} target="_blank" rel="noreferrer">
+                  🌐 אתר
+                </a>
+              )}
+
+              {place.phoneNumber && (
+                <a className="quick-action-btn" href={`tel:${place.phoneNumber}`}>
+                  📞 טלפון
+                </a>
+              )}
+
+              <button
+                type="button"
+                className={`quick-action-btn${visitedIds.includes(place.id) ? " active" : ""}`}
+                onClick={() => toggleVisited(place.id)}
+              >
+                {visitedIds.includes(place.id) ? "✓ ביקרנו" : "☐ לא ביקרנו"}
+              </button>
+
+              <button
+                type="button"
+                className="quick-action-btn"
+                onClick={() => startEditingPlace(place)}
+              >
+                ✏️ עריכה
+              </button>
+            </div>
+
+            <div className="location-info-grid">
+              <div className="info-card">
+                <span className="info-card-icon">📍</span>
+                <div className="info-card-text">
+                  <span className="info-card-label">כתובת</span>
+                  <span className="info-card-value">{place.address}</span>
+                </div>
+              </div>
+              <div className="info-card">
+                <span className="info-card-icon">🕒</span>
+                <div className="info-card-text">
+                  <span className="info-card-label">שעות פתיחה</span>
+                  <span className="info-card-value">{place.openingHours || "לא הוזן"}</span>
+                </div>
+              </div>
+              <div className="info-card">
+                <span className="info-card-icon">🚇</span>
+                <div className="info-card-text">
+                  <span className="info-card-label">תחנה קרובה</span>
+                  <span className="info-card-value">{place.station || "לא הוזן"}</span>
+                </div>
+              </div>
+              <div className="info-card">
+                <span className="info-card-icon">💳</span>
+                <div className="info-card-text">
+                  <span className="info-card-label">עלות וזמן שהות</span>
+                  <span className="info-card-value">
+                    {place.entryCost !== undefined ? (place.entryCost === 0 ? "חינם" : `${place.entryCost}₪`) : "לא הוזן"}
+                    {place.visitDurationMinutes ? ` · ${place.visitDurationMinutes} דק'` : ""}
+                  </span>
+                </div>
+              </div>
+              <div className="info-card" style={{ gridColumn: "span 2" }}>
+                <span className="info-card-icon">🛣️</span>
+                <div className="info-card-text">
+                  <span className="info-card-label">הגעה משוערת מהמלון</span>
+                  <span className="info-card-value">
+                    {transport.mode} · {transport.minutes} דק' · {formatDistance(haversineKm(hotels[0] ?? defaultHotel, place))}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <section className="sub-panel ai-notes-panel" style={{ width: "100%" }}>
+              <div className="ai-notes-head">
+                <h3>🔮 מידע ל-AI</h3>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={enrichingPlaceIds.has(place.id)}
+                  onClick={() => enrichPlace(place.id)}
+                >
+                  {enrichingPlaceIds.has(place.id) ? "⏳ שולף מידע..." : place.aiNotes ? "🔄 רענן מידע" : "🔮 שלוף מידע"}
+                </button>
+              </div>
+              {enrichErrors[place.id] && <p className="form-message error">{enrichErrors[place.id]}</p>}
+              {place.aiNotes ? (
+                <div className="ai-notes-content">
+                  {place.aiNotes.split("\n").filter(Boolean).map((line, index) => <p key={index}>{line}</p>)}
+                </div>
+              ) : (
+                <p className="ai-notes-empty">מחירים, מתי כדאי להגיע, התאמה לילדים והערות לעונה — שליפה אוטומטית מהאינטרנט או הוספה ידנית דרך עריכה. ה-AI מתחשב במידע הזה בתכנון.</p>
+              )}
+            </section>
+
+            {!!place.tips.length && (
+              <section className="sub-panel" style={{ width: "100%" }}>
+                <h3>טיפים</h3>
+                <div className="tips-row">
+                  {place.tips.map((tip) => <span key={tip} className="tip-pill">{tip}</span>)}
+                </div>
               </section>
-              {!!place.tips.length && <section className="sub-panel"><h3>טיפים</h3><div className="tips-row">{place.tips.map((tip) => <span key={tip} className="tip-pill">{tip}</span>)}</div></section>}
-              {(place.sourceUrl || place.instagramUrl) && <section className="sub-panel"><h3>קישורים</h3><div className="inline-links">{place.sourceUrl && <a href={place.sourceUrl} target="_blank" rel="noreferrer">לינק למקום</a>}{place.instagramUrl && <a href={place.instagramUrl} target="_blank" rel="noreferrer">Instagram</a>}</div></section>}
-            </>
-          )}
-        </div>
+            )}
+
+            {(place.sourceUrl || place.instagramUrl) && (
+              <section className="sub-panel" style={{ width: "100%" }}>
+                <h3>קישורים נוספים</h3>
+                <div className="inline-links">
+                  {place.sourceUrl && <a href={place.sourceUrl} target="_blank" rel="noreferrer">קישור מקור</a>}
+                  {place.instagramUrl && <a href={place.instagramUrl} target="_blank" rel="noreferrer">Instagram</a>}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
       </section>
     );
   };
@@ -2092,6 +2499,8 @@ function App() {
                       const isShort = height < 52;
                       const clickable = entry.kind === "place";
                       const photoUrl = entry.kind === "place" ? (entry.place.imageUrl || defaultPlaceImage) : null;
+                      const isPinned = entry.kind === "place" && day.pinnedPlaceIds.includes(entry.place.id);
+                      const pinnedTime = entry.kind === "place" ? day.pinnedTimes?.[entry.place.id] : undefined;
                       const startText = isDragging ? formatClockHalf(effectiveStart) : entry.startLabel;
                       const endText = isDragging ? formatClockHalf(effectiveStart + durationHours) : entry.endLabel;
                       const transitNode = entry.kind === "place" && entry.travelMinutes > 0 && !isDragging ? (
@@ -2104,7 +2513,7 @@ function App() {
                         transitNode,
                         <article
                           key={entry.kind === "flight" ? `cal-flight-${entry.flight.id}` : entry.kind === "hotel" ? `cal-hotel-${entry.subKind}-${entry.hotel.id}` : `cal-place-${entry.place.id}`}
-                          className={`${blockClass}${isShort ? " is-short" : ""}${clickable ? " is-clickable is-draggable" : ""}${isDragging ? " is-dragging" : ""}${photoUrl ? " has-photo" : ""}${entry.kind === "place" && openPlaceMenu === `${day.id}:${entry.place.id}` ? " menu-open" : ""}`}
+                          className={`${blockClass}${isShort ? " is-short" : ""}${clickable ? " is-clickable is-draggable" : ""}${isDragging ? " is-dragging" : ""}${isPinned ? " is-pinned" : ""}${photoUrl ? " has-photo" : ""}${entry.kind === "place" && openPlaceMenu === `${day.id}:${entry.place.id}` ? " menu-open" : ""}`}
                           style={{ top: `${top}px`, height: `${height}px`, insetInlineStart: offset, width }}
                           onPointerDown={clickable ? (event) => { if (event.button) return; if ((event.target as HTMLElement).closest(".place-menu-wrap")) return; event.currentTarget.setPointerCapture(event.pointerId); setCalDrag({ dayId: day.id, placeId: entry.place.id, pointerStartY: event.clientY, baseHour: entry.startHour, previewHour: entry.startHour, moved: false }); } : undefined}
                           onPointerMove={clickable ? (event) => { setCalDrag((prev) => { if (!prev || prev.placeId !== entry.place.id || prev.dayId !== day.id) return prev; const deltaHours = (event.clientY - prev.pointerStartY) / CALENDAR_PX_PER_HOUR; const snapped = Math.round((prev.baseHour + deltaHours) * 2) / 2; const clamped = Math.min(bounds.endHour - 0.5, Math.max(bounds.startHour, snapped)); const moved = prev.moved || Math.abs(event.clientY - prev.pointerStartY) > 4; if (clamped === prev.previewHour && moved === prev.moved) return prev; return { ...prev, previewHour: clamped, moved }; }); } : undefined}
@@ -2116,6 +2525,7 @@ function App() {
                         >
                           {photoUrl && <img className="planner-cal-block-img" src={photoUrl} alt="" loading="lazy" draggable={false} onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} />}
                           {entry.kind === "place" && renderPlaceMenu(entry.place)}
+                          {isPinned && <span className="planner-cal-pin" title={`מעוגן${pinnedTime ? ` · ${pinnedTime}` : ""}`}>📌</span>}
                           <span className="planner-cal-block-time">{startText}{!isShort ? ` – ${endText}` : ""}</span>
                           <strong className="planner-cal-block-title">{title}</strong>
                         </article>,
@@ -2748,6 +3158,12 @@ function App() {
                       <label>כתובת<input value={placeDraft.address} onChange={(e) => updatePlaceDraft("address", e.target.value)} /></label>
                       <label>שעות פתיחה<input value={placeDraft.openingHours} onChange={(e) => updatePlaceDraft("openingHours", e.target.value)} placeholder="לדוגמה 10:00-18:00" /></label>
                       <label>סוג<select value={placeDraft.type} onChange={(e) => updatePlaceDraft("type", e.target.value as PlaceType)}>{placeTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+                      {placeDraft.type === "אירוע" && (
+                        <>
+                          <label>יום האירוע<select value={placeDraft.eventDayId} onChange={(e) => updatePlaceDraft("eventDayId", e.target.value)}><option value="">בחר יום (יעוגן אוטומטית)</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></label>
+                          <label>שעת האירוע<input type="time" value={placeDraft.eventTime} onChange={(e) => updatePlaceDraft("eventTime", e.target.value)} /></label>
+                        </>
+                      )}
                       <label>אזור<input value={placeDraft.area} onChange={(e) => updatePlaceDraft("area", e.target.value)} /></label>
                       <label>תחנה קרובה<input value={placeDraft.station} onChange={(e) => updatePlaceDraft("station", e.target.value)} /></label>
                       <label>תמונה<input value={placeDraft.imageUrl} onChange={(e) => updatePlaceDraft("imageUrl", e.target.value)} /></label>
