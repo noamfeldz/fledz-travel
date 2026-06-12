@@ -17,7 +17,7 @@ if (!match?.[1]) {
 }
 
 const key = match[1].trim();
-const referer = process.env.GOOGLE_MAPS_REFERER || "http://localhost:4173/";
+const referer = process.env.GOOGLE_MAPS_REFERER || "http://localhost:3022/";
 const url = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&v=weekly`;
 
 const response = await fetch(url, {

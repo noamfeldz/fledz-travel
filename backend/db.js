@@ -118,6 +118,7 @@ async function initSchema() {
   await query(`ALTER TABLE places ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 3`);
   await query(`ALTER TABLE places ADD COLUMN IF NOT EXISTS visit_duration_minutes INTEGER`);
   await query(`ALTER TABLE places ADD COLUMN IF NOT EXISTS entry_cost REAL`);
+  await query(`ALTER TABLE places ADD COLUMN IF NOT EXISTS ai_notes TEXT`);
   await query(`ALTER TABLE day_plans ADD COLUMN IF NOT EXISTS pinned_place_ids JSONB NOT NULL DEFAULT '[]'`);
   await query(`ALTER TABLE day_plans ADD COLUMN IF NOT EXISTS pinned_times JSONB NOT NULL DEFAULT '{}'`);
   await query(`ALTER TABLE flights ADD COLUMN IF NOT EXISTS flight_number TEXT NOT NULL DEFAULT ''`);

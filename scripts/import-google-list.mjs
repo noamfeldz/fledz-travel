@@ -253,7 +253,7 @@ if (results.length > 0) {
 const snippet = `(function(){const d=${JSON.stringify(results)};const cur=JSON.parse(localStorage.getItem('fledz-places')||'[]');const ids=new Set(cur.map(p=>p.id));localStorage.setItem('fledz-places',JSON.stringify([...cur,...d.filter(p=>!ids.has(p.id))]));location.reload();})()`;
 
 console.log('\n── Fallback: browser console snippet ───────────────────────────────');
-console.log('(If API import failed, paste this in DevTools at http://localhost:4173)\n');
+console.log('(If API import failed, paste this in DevTools at http://localhost:3022)\n');
 console.log(snippet);
 console.log('\n────────────────────────────────────────────────────────────────────\n');
 

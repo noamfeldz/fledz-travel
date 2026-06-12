@@ -1,0 +1,107 @@
+{
+  "info": {
+    "message": "מה הכי מומלץ לבוקר הראשון?",
+    "expectIntent": "info",
+    "response": {
+      "reply": "יום הטיול הראשון מתחיל רק אחרי הצהריים ב-16:55 עקב הגעת הטיסה ✈️. לבוקר המלא הראשון (יום 2) מומלץ לבקר במצודת לונדון (Tower of London) ובגשר לונדון (Tower Bridge) שנמצאים קרוב זה לזה. משם ניתן להגיע לסטודיו האחים וורנר בשעות אחר הצהריים כפי שתוכנן. 🏰🌉",
+      "intent": "info",
+      "params": {},
+      "steps": []
+    }
+  },
+  "add_place": {
+    "message": "תוסיף את גלריית טייט מודרן לרשימת המקומות",
+    "expectIntent": "add_place",
+    "response": {
+      "reply": "אני יכול להציע להוסיף את גלריית טייט מודרן לרשימה. האם תרצה שאחפש את הפרטים שלה?",
+      "intent": "add_place",
+      "params": {
+        "name": "גלריית טייט מודרן",
+        "query": "Tate Modern"
+      },
+      "steps": [
+        "search_google_places",
+        "save_place"
+      ]
+    }
+  },
+  "set_time": {
+    "message": "תעגן את London Eye ליום 3 בשעה 10:00",
+    "expectIntent": "set_time",
+    "response": {
+      "reply": "הבנתי, London Eye יעוגן ליום 3 בשעה 10:00.",
+      "intent": "set_time",
+      "params": {
+        "placeName": "London Eye",
+        "time": "10:00",
+        "dayTitle": "יום 3",
+        "query": "London Eye"
+      },
+      "steps": [
+        "check_place_exists",
+        "add_place_if_missing",
+        "move_place_to_day",
+        "pin_place_time"
+      ]
+    }
+  },
+  "mark_visited": {
+    "message": "ביקרנו היום ב-Borough Market, אפשר לסמן שהיינו שם",
+    "expectIntent": "mark_visited",
+    "response": {
+      "reply": "אני יכול לסמן את Borough Market כמקום שביקרתם בו.",
+      "intent": "mark_visited",
+      "params": {
+        "placeName": "Borough Market"
+      },
+      "steps": [
+        "mark_place_visited"
+      ]
+    }
+  },
+  "edit_place": {
+    "message": "תעדכן את משך הביקור ב-Hyde Park ל-45 דקות",
+    "expectIntent": "edit_place",
+    "response": {
+      "reply": "אפשר לעדכן את משך הביקור ב-Hyde Park ל-45 דקות. זה ישפיע על תכנון היום.",
+      "intent": "edit_place",
+      "params": {
+        "placeName": "Hyde Park",
+        "field": "visitDurationMinutes",
+        "value": 45
+      },
+      "steps": [
+        "update_place_field"
+      ]
+    }
+  },
+  "replan": {
+    "message": "מחר אמור לרדת גשם כל היום, צריך לשנות את התוכנית בהתאם",
+    "expectIntent": "replan",
+    "response": {
+      "reply": "הבנתי, גשם מחר אומר שצריך לשנות את התוכנית ☔. אני יכולה להציע לחשב מחדש את התוכנית ולהתאים אותה לפעילויות במקומות סגורים.",
+      "intent": "replan",
+      "params": {
+        "reason": "גשם צפוי כל היום"
+      },
+      "steps": [
+        "recompute_plan"
+      ]
+    }
+  },
+  "reschedule": {
+    "message": "הטיסה חזרה שלנו הוקדמה בשלוש שעות, מה עושים?",
+    "expectIntent": "reschedule",
+    "response": {
+      "reply": "הבנתי שהטיסה חזרה שלכם הוקדמה בשלוש שעות. זה שינוי משמעותי ✈️ נצטרך לעדכן את פרטי הטיסה ולבדוק איך זה משפיע על התוכנית כולה.",
+      "intent": "reschedule",
+      "params": {
+        "detail": "הטיסה חזרה הוקדמה בשלוש שעות"
+      },
+      "steps": [
+        "open_flight_editor",
+        "recompute_plan"
+      ]
+    }
+  }
+}

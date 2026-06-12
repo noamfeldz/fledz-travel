@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { deriveLocationBias, importPlacesLibrary } from "./googleMapsLoader";
 
 const API = "/api";
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(API + path, {
     headers: { "Content-Type": "application/json" },
@@ -245,6 +245,15 @@ function extractDisplayContent(content: string) {
     }
   }
 
+  // JSON.parse failed (e.g. unescaped Hebrew gershayim inside the reply string)
+  // — recover the reply text with a loose match instead of showing raw JSON.
+  if (trimmed.includes('"reply"')) {
+    const looseMatch =
+      trimmed.match(/"reply"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:intent|params|steps)"/) ||
+      trimmed.match(/"reply"\s*:\s*"([\s\S]*?)"\s*\}?\s*$/);
+    if (looseMatch?.[1]) return looseMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+  }
+
   return content;
 }
 
@@ -302,7 +311,6 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const planTriggeredRef = useRef(false);
-  const googleMapsLoaderRef = useRef<Promise<void> | null>(null);
   const activeLookupRef = useRef<Set<string>>(new Set());
 
   // Load sessions list
@@ -334,34 +342,6 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
-
-  const ensureGooglePlacesReady = useCallback(async () => {
-    if (!GOOGLE_MAPS_API_KEY) throw new Error("VITE_GOOGLE_MAPS_API_KEY לא מוגדר");
-    if (!googleMapsLoaderRef.current) {
-      googleMapsLoaderRef.current = new Promise<void>((resolve, reject) => {
-        if (window.google?.maps?.importLibrary) {
-          resolve();
-          return;
-        }
-        const existingScript = document.querySelector<HTMLScriptElement>('script[data-google-maps-js="true"]');
-        if (existingScript) {
-          existingScript.addEventListener("load", () => resolve(), { once: true });
-          existingScript.addEventListener("error", () => reject(new Error("script-load-failed")), { once: true });
-          return;
-        }
-        (window as Window & { __codexGoogleMapsInit?: () => void }).__codexGoogleMapsInit = () => resolve();
-        const script = document.createElement("script");
-        script.dataset.googleMapsJs = "true";
-        script.async = true;
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&loading=async&libraries=places&v=weekly&callback=__codexGoogleMapsInit`;
-        script.onerror = () => reject(new Error("script-load-failed"));
-        document.head.appendChild(script);
-      }).finally(() => {
-        delete (window as Window & { __codexGoogleMapsInit?: () => void }).__codexGoogleMapsInit;
-      });
-    }
-    await googleMapsLoaderRef.current;
-  }, []);
 
   const searchIntentCandidates = useCallback(async (messageId: string, intentAction: IntentAction) => {
     if (activeLookupRef.current.has(messageId)) return;
@@ -402,9 +382,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
     }));
 
     try {
-      await ensureGooglePlacesReady();
-      const google = window.google as any;
-      const placesLibrary = await google.maps.importLibrary("places");
+      const placesLibrary = await importPlacesLibrary();
       const { Place, SearchByTextRankPreference } = placesLibrary as {
         Place: { searchByText: (request: Record<string, unknown>) => Promise<{ places: any[] }> };
         SearchByTextRankPreference?: { RELEVANCE?: string };
@@ -429,7 +407,10 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
         region: "GB",
         maxResultCount: 3,
         rankPreference: SearchByTextRankPreference?.RELEVANCE ?? "RELEVANCE",
-        locationBias: { center: { lat: 51.5074, lng: -0.1278 }, radius: 50000 },
+        locationBias: deriveLocationBias(
+          tripContext.hotels as Array<{ lat?: number; lng?: number }>,
+          tripContext.places as Array<{ lat?: number; lng?: number }>,
+        ),
       });
       const candidates: IntentLookupCandidate[] = searchResults.map((place: any) => {
         const displayName = place.displayName?.toString?.() || place.displayName || name;
@@ -493,7 +474,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
     } finally {
       activeLookupRef.current.delete(messageId);
     }
-  }, [ensureGooglePlacesReady, tripContext.places]);
+  }, [tripContext.hotels, tripContext.places]);
 
   useEffect(() => {
     messages.forEach((message) => {
@@ -628,12 +609,12 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
           sessionId,
           ...tripContext,
         }),
-      }) as { reply: string; intent?: string; params?: Record<string, unknown>; steps?: string[] };
+      }) as { reply: string; intent?: string; params?: Record<string, unknown>; steps?: string[]; assistantMessageId?: string | null };
 
       const intentAction = buildIntentAction(result.intent, result.params, result.steps);
 
       const assistantMsg: ChatMessage = {
-        id: `tmp-${Date.now()}-a`,
+        id: result.assistantMessageId || `tmp-${Date.now()}-a`,
         session_id: sessionId,
         role: "assistant",
         content: result.reply,
@@ -721,22 +702,25 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
       isNewSession = true;
     }
 
-    const userMsg: ChatMessage = {
-      id: `tmp-preview-u-${Date.now()}`,
-      session_id: sessionId,
-      role: 'user',
-      content: '🤖 הצג לי את האילוצים לפני תכנון',
-      created_at: new Date().toISOString(),
-    };
-    const previewMsg: ChatMessage = {
-      id: `tmp-preview-a-${Date.now()}`,
-      session_id: sessionId,
-      role: 'assistant',
-      content,
-      meta: { planPreview: true },
-      created_at: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, userMsg, previewMsg]);
+    // Persist first, then load from the DB — appending optimistic messages here
+    // races with the messages-load effect that fires on session change and
+    // wipes them (the preview used to vanish when starting from a new session).
+    const userContent = '🤖 הצג לי את האילוצים לפני תכנון';
+    try {
+      await apiFetch(`/chat/sessions/${sessionId}/message-pair`, {
+        method: 'POST',
+        body: JSON.stringify({ userMessage: userContent, assistantText: content, meta: { planPreview: true } }),
+      });
+      const data = await apiFetch(`/chat/sessions/${sessionId}/messages`);
+      setMessages((data as ChatMessage[]).map(normalizeMessage));
+    } catch {
+      // Fallback: show in-memory only
+      setMessages((prev) => [
+        ...prev,
+        { id: `tmp-preview-u-${Date.now()}`, session_id: sessionId!, role: 'user', content: userContent, created_at: new Date().toISOString() },
+        { id: `tmp-preview-a-${Date.now()}`, session_id: sessionId!, role: 'assistant', content, meta: { planPreview: true }, created_at: new Date().toISOString() },
+      ]);
+    }
 
     if (isNewSession) {
       navigate(`/${slug}/chat/${sessionId}`, { replace: true });

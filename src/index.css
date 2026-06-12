@@ -434,6 +434,15 @@ input:focus, select:focus, textarea:focus {
   display: block;
 }
 
+.autocomplete-success-banner {
+  background: var(--color-success-bg, #f0fdf4);
+  border: 1px solid var(--color-success-border, #86efac);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.9rem;
+  color: var(--color-success-text, #166534);
+}
+
 .google-search-note {
   margin: 0;
   color: var(--color-text-muted);
@@ -6442,7 +6451,7 @@ label {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  padding-inline-start: calc(4.5rem + 0.95rem);
+  padding-inline-start: calc(5rem + 0.95rem);
   padding-block: 0.3rem 0;
   color: rgba(255, 245, 233, 0.28);
 }
@@ -6513,7 +6522,7 @@ label {
   --planner-connector-top: 4.15rem;
   --planner-connector-line-length: 1.2rem;
   display: grid;
-  grid-template-columns: 4.5rem minmax(0, 1fr);
+  grid-template-columns: 5rem minmax(0, 1fr);
   gap: 0.95rem;
   align-items: stretch;
   position: relative;
@@ -6541,7 +6550,7 @@ label {
   border-radius: 999px;
   background: #151518;
   border: 2px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 0 0 4px rgba(8, 8, 10, 0.88);
+  box-shadow: 0 0 0 3px rgba(8, 8, 10, 0.95);
   pointer-events: none;
 }
 
@@ -6571,71 +6580,266 @@ label {
   --timeline-span-height: 96px;
   position: relative;
   min-height: var(--timeline-span-height);
-  padding-top: 0.35rem;
 }
 
-.planner-time-track {
-  position: relative;
-  width: 100%;
-  min-height: var(--timeline-span-height);
-}
-
-.planner-time-hour {
+/* Real clock time stamped beside the shared day spine, aligned with the dot. */
+.planner-rail-stamp {
   position: absolute;
-  left: 0;
-  right: 0;
+  top: calc(var(--planner-connector-top) - 0.62rem);
+  inset-inline-start: calc(var(--planner-axis-offset) + 1rem);
+  inset-inline-end: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.45rem;
-  transform: translateY(-50%);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
   pointer-events: none;
 }
 
-.planner-time-hour-label {
-  color: rgba(255, 245, 233, 0.82);
+.planner-rail-start {
   font-family: var(--font-heading);
-  font-size: 0.96rem;
+  font-size: 1rem;
   font-weight: 900;
   line-height: 1;
   letter-spacing: -0.02em;
+  color: rgba(255, 245, 233, 0.92);
 }
 
-.planner-time-hour-tick {
-  width: 0.85rem;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.3);
+.planner-rail-end {
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(255, 245, 233, 0.4);
 }
 
-.planner-time-track-span {
-  position: absolute;
-  left: calc(100% - 0.9rem);
-  transform: translateX(-50%);
-  border-radius: 999px;
-}
+/* Time-of-day coloured dot on the shared spine (node-shell::after). */
+.planner-node-shell--seg-morning::after { background: #fdba74; border-color: rgba(253, 186, 116, 0.95); }
+.planner-node-shell--seg-midday::after { background: #f59e0b; border-color: rgba(245, 158, 11, 0.95); }
+.planner-node-shell--seg-evening::after { background: #93c5fd; border-color: rgba(147, 197, 253, 0.95); }
+.planner-node-shell--outbound::after { background: #60a5fa; border-color: rgba(96, 165, 250, 0.95); }
+.planner-node-shell--return::after { background: #c084fc; border-color: rgba(192, 132, 252, 0.95); }
+.planner-node-shell--hotel::after { background: #34d399; border-color: rgba(52, 211, 153, 0.95); }
 
-.planner-time-track-span {
-  top: 0.45rem;
-  height: calc(var(--timeline-span-height) - 0.9rem);
-  width: 10px;
-  background: linear-gradient(180deg, #fb923c 0%, #f97316 100%);
-  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.12), 0 12px 24px rgba(249, 115, 22, 0.22);
-}
-
-.planner-time-rail--outbound .planner-time-track-span {
-  background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.14), 0 12px 24px rgba(37, 99, 235, 0.22);
-}
-
-.planner-time-rail--return .planner-time-track-span {
-  background: linear-gradient(180deg, #c084fc 0%, #7c3aed 100%);
-  box-shadow: 0 0 0 3px rgba(192, 132, 252, 0.14), 0 12px 24px rgba(124, 58, 237, 0.22);
-}
-
-.planner-time-rail--outbound .planner-time-hour-label,
-.planner-time-rail--return .planner-time-hour-label {
+.planner-time-rail--outbound .planner-rail-start,
+.planner-time-rail--return .planner-rail-start {
   color: rgba(239, 246, 255, 0.94);
+}
+
+/* Idle / free time between activities, aligned to the card column. */
+.planner-gap-row {
+  display: flex;
+  padding-inline-start: calc(5rem + 0.95rem);
+  margin: -0.35rem 0;
+}
+
+.planner-gap-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 245, 233, 0.5);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+/* ── View toggle (cards ⇄ calendar) ───────────────────────────── */
+.planner-view-toggle {
+  display: inline-flex;
+  padding: 0.2rem;
+  gap: 0.15rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.planner-view-toggle button {
+  border: none;
+  background: transparent;
+  color: rgba(255, 245, 233, 0.6);
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  font-weight: 800;
+  padding: 0.34rem 0.95rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.planner-view-toggle button.active {
+  background: linear-gradient(180deg, #fb923c 0%, #f97316 100%);
+  color: #1a1206;
+  box-shadow: 0 6px 16px rgba(249, 115, 22, 0.28);
+}
+
+/* ── Proportional day-grid (calendar) view ────────────────────── */
+.planner-calendar-column {
+  min-width: 0;
+}
+
+.planner-calendar {
+  --cal-gutter: 3rem;
+  position: relative;
+  width: 100%;
+}
+
+.planner-cal-hour {
+  position: absolute;
+  inset-inline: 0;
+  height: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+
+.planner-cal-hour-label {
+  flex: 0 0 var(--cal-gutter);
+  font-family: var(--font-heading);
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: rgba(255, 245, 233, 0.32);
+  text-align: start;
+  transform: translateY(-0.5px);
+}
+
+.planner-cal-hour-line {
+  flex: 1;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.12) 0 6px, transparent 6px 12px);
+}
+
+.planner-cal-block {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.15rem;
+  padding: 0.45rem 0.65rem;
+  margin-inline-start: 0.15rem;
+  border-radius: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-inline-start: 3px solid var(--cal-accent, #f97316);
+  background: var(--cal-bg, rgba(249, 115, 22, 0.16));
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+/* Full-bleed photo background for place blocks, with a scrim for legible text. */
+.planner-cal-block-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+}
+
+.planner-cal-block.has-photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(180deg, rgba(8, 8, 10, 0.32) 0%, rgba(8, 8, 10, 0.2) 38%, rgba(8, 8, 10, 0.86) 100%);
+}
+
+.planner-cal-block.has-photo .planner-cal-block-time,
+.planner-cal-block.has-photo .planner-cal-block-title {
+  position: relative;
+  z-index: 2;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+}
+
+.planner-cal-block.has-photo .planner-cal-block-time {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.planner-cal-block.is-clickable {
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.planner-cal-block.is-clickable:hover {
+  transform: translateX(-2px);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.planner-cal-block.is-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.planner-cal-block.is-dragging {
+  cursor: grabbing;
+  z-index: 30;
+  transform: none;
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.6);
+  transition: none;
+}
+
+.planner-cal-block.is-dragging .planner-cal-block-time {
+  color: #fff;
+}
+
+.planner-cal-block-time {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.62);
+  letter-spacing: 0.01em;
+}
+
+.planner-cal-block-title {
+  font-family: var(--font-heading);
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: rgba(255, 248, 240, 0.97);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.planner-cal-block.is-short {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.45rem;
+  padding-block: 0.25rem;
+}
+
+.planner-cal-block.is-short .planner-cal-block-title {
+  font-size: 0.82rem;
+}
+
+.planner-cal-block--morning { --cal-accent: #fdba74; --cal-bg: rgba(253, 186, 116, 0.14); }
+.planner-cal-block--midday { --cal-accent: #f59e0b; --cal-bg: rgba(245, 158, 11, 0.14); }
+.planner-cal-block--evening { --cal-accent: #93c5fd; --cal-bg: rgba(147, 197, 253, 0.14); }
+.planner-cal-block--outbound { --cal-accent: #60a5fa; --cal-bg: rgba(96, 165, 250, 0.18); }
+.planner-cal-block--return { --cal-accent: #c084fc; --cal-bg: rgba(192, 132, 252, 0.18); }
+.planner-cal-block--hotel { --cal-accent: #34d399; --cal-bg: rgba(52, 211, 153, 0.16); }
+
+/* Transit chip sitting in the gap above a block — how you get there + rounded time. */
+.planner-cal-transit {
+  position: absolute;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding-inline: 0.2rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: rgba(255, 245, 233, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.planner-cal-transit-icon {
+  font-size: 0.8rem;
 }
 
 .planner-transport-row {
@@ -6956,7 +7160,7 @@ label {
 
 @media (max-width: 1023px) {
   .planner-node-shell {
-    grid-template-columns: 4rem minmax(0, 1fr);
+    grid-template-columns: 4.5rem minmax(0, 1fr);
     gap: 0.75rem;
   }
 
@@ -6964,8 +7168,12 @@ label {
     --planner-axis-offset: 0.9rem;
   }
 
-  .planner-time-hour-label {
-    font-size: 0.88rem;
+  .planner-rail-start {
+    font-size: 0.92rem;
+  }
+
+  .planner-gap-row {
+    padding-inline-start: calc(4.5rem + 0.75rem);
   }
 
   .planner-timeline-card {
@@ -6995,7 +7203,7 @@ label {
   }
 
   .planner-node-shell {
-    grid-template-columns: 3.45rem minmax(0, 1fr);
+    grid-template-columns: 3.9rem minmax(0, 1fr);
     gap: 0.6rem;
     --planner-connector-line-length: 0.92rem;
     --planner-connector-top: 3.95rem;
@@ -7017,20 +7225,20 @@ label {
     --planner-connector-top: 2.05rem;
   }
 
-  .planner-time-hour {
-    gap: 0.3rem;
+  .planner-rail-stamp {
+    inset-inline-start: calc(var(--planner-axis-offset) + 0.45rem);
   }
 
-  .planner-time-hour-label {
-    font-size: 0.78rem;
+  .planner-rail-start {
+    font-size: 0.82rem;
   }
 
-  .planner-time-hour-tick {
-    width: 0.55rem;
+  .planner-rail-end {
+    font-size: 0.66rem;
   }
 
-  .planner-time-track-span {
-    left: calc(100% - 0.78rem);
+  .planner-gap-row {
+    padding-inline-start: calc(3.9rem + 0.6rem);
   }
 
   .planner-timeline-card {
@@ -7477,4 +7685,99 @@ label {
     opacity: 1;
     pointer-events: auto;
   }
+}
+
+/* ── Place context menu: compact + reset against global pill buttons ───────── */
+.place-context-menu {
+  min-width: 170px;
+  padding: 0.3rem;
+  gap: 0.08rem;
+  background: rgba(16, 16, 20, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.9rem;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+}
+
+.place-context-menu button {
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 0.55rem;
+  box-shadow: none;
+  padding: 0.42rem 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text);
+  justify-content: flex-start;
+  gap: 0.4rem;
+}
+
+.place-context-menu button:hover {
+  transform: none;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.place-context-menu .context-menu-day-row {
+  padding: 0.35rem 0.7rem 0.45rem;
+}
+
+.place-context-menu .context-menu-day-row span {
+  margin-bottom: 0.2rem;
+}
+
+/* Keep an open menu above sibling cards and calendar blocks */
+.place-menu-wrap:has(> .place-context-menu) {
+  z-index: 600;
+}
+
+/* Calendar (לוח) blocks: let the menu escape the block and float above lanes */
+.planner-cal-block .place-menu-wrap {
+  top: 0.3rem;
+  inset-inline-end: 0.3rem;
+  z-index: 3;
+}
+
+.planner-cal-block .place-menu-btn {
+  padding: 0.05rem 0.42rem;
+  font-size: 0.95rem;
+  background: rgba(10, 10, 12, 0.55);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #eee;
+}
+
+.planner-cal-block.menu-open {
+  overflow: visible;
+  z-index: 60;
+}
+
+.planner-cal-block.menu-open .planner-cal-block-img,
+.planner-cal-block.menu-open.has-photo::after {
+  border-radius: inherit;
+}
+
+/* ── AI notes panel on the place page ─────────────────────────────────────── */
+.ai-notes-panel .ai-notes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.ai-notes-panel .ai-notes-head h3 {
+  margin: 0;
+}
+
+.ai-notes-content p {
+  margin: 0 0 0.35rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.ai-notes-empty {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin: 0;
 }
