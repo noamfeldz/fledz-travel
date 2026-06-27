@@ -39,9 +39,19 @@ type TripContext = {
   visitedIds: string[];
 };
 
+export type ScheduleItem = {
+  time: string;
+  kind: "place" | "flight" | "transit" | "break";
+  placeId?: string;
+  label: string;
+  note?: string;
+};
+
 export type AiPlanResult = {
   plan: Record<string, string[]>;
+  schedule?: Record<string, ScheduleItem[]>;
   excluded: Array<{ placeId: string; reason: string }>;
+  issues?: string[];
   recommendations: string[];
   summary: string;
 };
@@ -207,6 +217,7 @@ type Props = {
   tripContext: TripContext;
   onApplyPlan?: (plan: AiPlanResult) => void;
   onAction?: (intent: string, params: Record<string, unknown>) => void;
+  onSetPriority?: (placeId: string, priority: number) => void;
   triggerPlan?: boolean;
 };
 
@@ -261,39 +272,297 @@ function extractDisplayContent(content: string) {
   return content;
 }
 
-function renderMessageContent(content: string, meta?: ChatMessage["meta"]) {
+// Inline markdown: **bold** and [text](url) links. Internal links (starting with
+// "/") navigate within the SPA via onNavigate instead of a full page reload.
+function renderInline(text: string, onNavigate?: (path: string) => void): Array<string | JSX.Element> {
+  const nodes: Array<string | JSX.Element> = [];
+  const regex = /\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  let k = 0;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) nodes.push(text.slice(last, match.index));
+    if (match[1] !== undefined) {
+      const label = match[1];
+      const url = match[2];
+      nodes.push(
+        <a
+          key={`a${k}`}
+          href={url}
+          className="chat-msg-link"
+          onClick={(e) => {
+            if (onNavigate && url.startsWith("/")) {
+              e.preventDefault();
+              onNavigate(url);
+            }
+          }}
+        >
+          {label}
+        </a>
+      );
+    } else if (match[3] !== undefined) {
+      nodes.push(<strong key={`b${k}`}>{match[3]}</strong>);
+    }
+    last = regex.lastIndex;
+    k++;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
+function renderMessageContent(content: string, meta?: ChatMessage["meta"], onNavigate?: (path: string) => void) {
   const displayContent = extractDisplayContent(content);
-  // Simple markdown-ish rendering: bold, newlines, bullet lists
+  // Simple markdown-ish rendering: bold, links, newlines, bullet lists
   const lines = displayContent.split("\n");
   return (
     <div className="chat-msg-text">
       {lines.map((line, i) => {
-        if (line.startsWith("## ")) return <h3 key={i}>{line.slice(3)}</h3>;
-        if (line.startsWith("### ")) return <h4 key={i}>{line.slice(4)}</h4>;
+        if (line.startsWith("## ")) return <h3 key={i}>{renderInline(line.slice(3), onNavigate)}</h3>;
+        if (line.startsWith("### ")) return <h4 key={i}>{renderInline(line.slice(4), onNavigate)}</h4>;
         if (line.startsWith("- ") || line.startsWith("• "))
-          return <li key={i}>{line.slice(2)}</li>;
-        if (line.startsWith("**") && line.endsWith("**"))
+          return <li key={i}>{renderInline(line.slice(2), onNavigate)}</li>;
+        if (line.startsWith("**") && line.endsWith("**") && !line.includes("]("))
           return <strong key={i}>{line.slice(2, -2)}</strong>;
         if (line === "") return <br key={i} />;
-        // Inline bold
-        const parts = line.split(/(\*\*[^*]+\*\*)/g);
-        return (
-          <p key={i}>
-            {parts.map((part, j) =>
-              part.startsWith("**") && part.endsWith("**") ? (
-                <strong key={j}>{part.slice(2, -2)}</strong>
-              ) : (
-                part
-              )
-            )}
-          </p>
-        );
+        return <p key={i}>{renderInline(line, onNavigate)}</p>;
       })}
     </div>
   );
 }
 
-export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPlan }: Props) {
+// ── Plan-preview model ────────────────────────────────────────────────────────
+// The "what the AI knows" preview is built once into a structured model, used
+// both to persist a markdown snapshot (history/fallback) and to render a LIVE,
+// interactive panel (clickable priority stars).
+type PreviewLink = { label: string; path: string };
+type PreviewPlace = { id: string; name: string; priority: number; pinned: boolean; when: string; visited: boolean; path: string };
+type PreviewGroup = { type: string; places: PreviewPlace[] };
+type PreviewModel = {
+  setupLine: string;
+  settingsPath: string;
+  flights: PreviewLink[];
+  hotels: PreviewLink[];
+  transits: PreviewLink[];
+  groups: PreviewGroup[];
+  counts: { flights: number; hotels: number; transits: number; places: number };
+};
+
+function buildPreviewModel(tripContext: TripContext, slug: string): PreviewModel {
+  const flights = (tripContext.flights as Array<Record<string, unknown>>) || [];
+  const places = (tripContext.places as Array<Record<string, unknown>>) || [];
+  const dayPlans = (tripContext.dayPlans as Array<Record<string, unknown>>) || [];
+  const hotels = (tripContext.hotels as Array<Record<string, unknown>>) || [];
+  const transits = ((tripContext as { transits?: unknown[] }).transits as Array<Record<string, unknown>>) || [];
+  const visitedIds = new Set((tripContext.visitedIds as string[]) || []);
+  const cfg = (tripContext.tripConfig as Record<string, unknown>) || {};
+
+  const settingsPath = `/${slug}/settings`;
+  const hotelPath = `/${slug}/hotel`;
+  const plannerPath = `/${slug}/planner`;
+  const placePath = (id: string) => `/${slug}/places/${encodeURIComponent(id)}`;
+
+  const pinnedInfo = new Map<string, { dayTitle: string; time?: string }>();
+  for (const day of dayPlans) {
+    const pinned = (day.pinnedPlaceIds as string[]) || [];
+    const times = (day.pinnedTimes as Record<string, string>) || {};
+    for (const placeId of pinned) pinnedInfo.set(placeId, { dayTitle: String(day.title || ''), time: times[placeId] });
+  }
+
+  const flightLinks: PreviewLink[] = flights.map((f) => {
+    const type = f.type === 'arrival' ? '🛬 נחיתה' : '🛫 המראה';
+    const date = String(f.flightDate || '');
+    const time = f.flightTime ? ` בשעה ${f.flightTime}` : '';
+    const airport = f.airport ? ` — ${f.airport}` : '';
+    return { label: `${type}: ${date}${time}${airport}`, path: settingsPath };
+  });
+  const hotelLinks: PreviewLink[] = hotels.map((h) => {
+    const name = String(h.name || 'מלון');
+    const ci = h.checkInDate ? `כניסה ${h.checkInDate}${h.checkInTime ? ` ${h.checkInTime}` : ''}` : '';
+    const co = h.checkOutDate ? `יציאה ${h.checkOutDate}${h.checkOutTime ? ` ${h.checkOutTime}` : ''}` : '';
+    const dates = [ci, co].filter(Boolean).join(' · ');
+    return { label: `🏨 ${name}${dates ? ` — ${dates}` : ''}`, path: hotelPath };
+  });
+  const transitLinks: PreviewLink[] = transits.map((t) => {
+    const day = dayPlans.find((d) => d.id === t.dayId);
+    const when = t.departTime ? ` ${t.departTime}` : '';
+    return { label: `🚆 ${t.fromLabel || '?'} → ${t.toLabel || '?'}${when}${day?.title ? ` (${day.title})` : ''}`, path: plannerPath };
+  });
+
+  const typeOrder = ['אטרקציה', 'מוזיאון', 'פארק', 'אוכל', 'ילדים', 'אירוע'];
+  const byType = new Map<string, Array<Record<string, unknown>>>();
+  for (const p of places) {
+    const t = String(p.type || 'אחר');
+    if (!byType.has(t)) byType.set(t, []);
+    byType.get(t)!.push(p);
+  }
+  const orderedTypes = [
+    ...typeOrder.filter((t) => byType.has(t)),
+    ...[...byType.keys()].filter((t) => !typeOrder.includes(t)),
+  ];
+  const groups: PreviewGroup[] = orderedTypes.map((t) => {
+    const group = [...byType.get(t)!];
+    group.sort((a, b) => {
+      const aPinned = pinnedInfo.has(String(a.id)) ? 1 : 0;
+      const bPinned = pinnedInfo.has(String(b.id)) ? 1 : 0;
+      if (aPinned !== bPinned) return bPinned - aPinned;
+      return ((b.priority as number) ?? 3) - ((a.priority as number) ?? 3);
+    });
+    return {
+      type: t,
+      places: group.map((p) => {
+        const pin = pinnedInfo.get(String(p.id));
+        return {
+          id: String(p.id),
+          name: String(p.name),
+          priority: (p.priority as number) ?? 3,
+          pinned: !!pin,
+          when: pin ? `${pin.dayTitle}${pin.time ? ` ${pin.time}` : ''}` : '',
+          visited: visitedIds.has(String(p.id)),
+          path: placePath(String(p.id)),
+        };
+      }),
+    };
+  });
+
+  const setupLine = [
+    cfg.destination ? `יעד: ${cfg.destination}` : '',
+    cfg.startDate ? `מ-${cfg.startDate}` : '',
+    cfg.numDays ? `${cfg.numDays} ימים` : '',
+    `שעות ${cfg.dayStartHour ?? 9}:00–${cfg.dayEndHour ?? 21}:00`,
+    `צהריים ${cfg.lunchBreakStart ?? 13}:00–${cfg.lunchBreakEnd ?? 15}:00`,
+  ].filter(Boolean).join(' · ');
+
+  return {
+    setupLine, settingsPath,
+    flights: flightLinks, hotels: hotelLinks, transits: transitLinks, groups,
+    counts: { flights: flights.length, hotels: hotels.length, transits: transits.length, places: places.length },
+  };
+}
+
+// Markdown snapshot persisted to chat history (display uses the live panel below).
+function previewModelToMarkdown(model: PreviewModel): string {
+  const stars = (n: number) => '⭐'.repeat(Math.max(1, Math.min(5, n)));
+  const locationLines: string[] = [];
+  for (const g of model.groups) {
+    locationLines.push(`**${g.type} (${g.places.length})**`);
+    for (const p of g.places) {
+      const visitedTag = p.visited ? ' · ✓ ביקרנו' : '';
+      const link = `[${p.name}](${p.path})`;
+      if (p.pinned) locationLines.push(`📌 ${link} — ${p.when}${visitedTag}`);
+      else locationLines.push(`${stars(p.priority)} ${link}${visitedTag}`);
+    }
+    locationLines.push('');
+  }
+  if (locationLines[locationLines.length - 1] === '') locationLines.pop();
+  return [
+    '## 📋 מה ה-AI יודע לפני שמתחיל לתכנן',
+    '',
+    '### 📅 הגדרות הטיול',
+    `[${model.setupLine || 'לא הוגדרו'}](${model.settingsPath})`,
+    '',
+    `### ✈️ טיסות (${model.counts.flights})`,
+    ...(model.flights.length ? model.flights.map((f) => `[${f.label}](${f.path})`) : ['לא הוזנו טיסות']),
+    '',
+    `### 🏨 מלונות (${model.counts.hotels})`,
+    ...(model.hotels.length ? model.hotels.map((h) => `[${h.label}](${h.path})`) : ['לא הוזנו מלונות']),
+    '',
+    `### 🚆 נסיעות מתוזמנות (${model.counts.transits})`,
+    ...(model.transits.length ? model.transits.map((t) => `[${t.label}](${t.path})`) : ['אין נסיעות מתוזמנות']),
+    '',
+    `### 📍 כל המקומות (${model.counts.places})`,
+    ...(locationLines.length ? locationLines : ['לא הוזנו מקומות']),
+    '',
+    '_עברו על הרשימה. שנו עדיפות בלחיצה על הכוכבים. עיגון/מקום חסר — תקנו בעמוד המקום. כשהכל מוכן — לחצו להתחיל תכנון._',
+  ].join('\n');
+}
+
+// Clickable 5-star priority control.
+function PriorityStars({ value, onChange }: { value: number; onChange?: (n: number) => void }) {
+  return (
+    <span className="prio-stars" role="group" aria-label="עדיפות">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          className={`prio-star${n <= value ? " filled" : ""}`}
+          onClick={() => onChange?.(n)}
+          aria-label={`עדיפות ${n}`}
+          title={`קבע עדיפות ${n}`}
+          disabled={!onChange}
+        >
+          ★
+        </button>
+      ))}
+    </span>
+  );
+}
+
+// Live interactive render of the plan preview (priority editable via stars).
+function renderPlanPreviewPanel(
+  model: PreviewModel,
+  onNavigate: (path: string) => void,
+  onSetPriority?: (placeId: string, priority: number) => void,
+) {
+  const link = (l: PreviewLink, key?: number) => (
+    <a
+      key={key}
+      href={l.path}
+      className="chat-msg-link"
+      onClick={(e) => { e.preventDefault(); onNavigate(l.path); }}
+    >
+      {l.label}
+    </a>
+  );
+  const section = (items: PreviewLink[], empty: string) =>
+    items.length ? items.map((l, i) => <p key={i}>{link(l, i)}</p>) : <p>{empty}</p>;
+
+  return (
+    <div className="chat-msg-text plan-preview">
+      <h3>📋 מה ה-AI יודע לפני שמתחיל לתכנן</h3>
+
+      <h4>📅 הגדרות הטיול</h4>
+      <p>{link({ label: model.setupLine || "לא הוגדרו", path: model.settingsPath })}</p>
+
+      <h4>✈️ טיסות ({model.counts.flights})</h4>
+      {section(model.flights, "לא הוזנו טיסות")}
+
+      <h4>🏨 מלונות ({model.counts.hotels})</h4>
+      {section(model.hotels, "לא הוזנו מלונות")}
+
+      <h4>🚆 נסיעות מתוזמנות ({model.counts.transits})</h4>
+      {section(model.transits, "אין נסיעות מתוזמנות")}
+
+      <h4>📍 כל המקומות ({model.counts.places})</h4>
+      {model.groups.map((g) => (
+        <div key={g.type} className="prio-group">
+          <strong className="prio-group-title">{g.type} ({g.places.length})</strong>
+          {g.places.map((p) => (
+            <div key={p.id} className="prio-row">
+              {p.pinned ? (
+                <span className="prio-pin" title="מעוגן — חייב לקרות">📌</span>
+              ) : (
+                <PriorityStars value={p.priority} onChange={onSetPriority ? (n) => onSetPriority(p.id, n) : undefined} />
+              )}
+              <a
+                href={p.path}
+                className="chat-msg-link"
+                onClick={(e) => { e.preventDefault(); onNavigate(p.path); }}
+              >
+                {p.name}
+              </a>
+              {p.pinned && <span className="prio-when">— {p.when}</span>}
+              {p.visited && <span className="prio-visited">· ✓ ביקרנו</span>}
+            </div>
+          ))}
+        </div>
+      ))}
+
+      <p className="prio-hint"><em>עברו על הרשימה. שנו עדיפות בלחיצה על הכוכבים. עיגון/מקום חסר — תקנו בעמוד המקום. כשהכל מוכן — לחצו להתחיל תכנון.</em></p>
+    </div>
+  );
+}
+
+export default function ChatPage({ tripContext, onApplyPlan, onAction, onSetPriority, triggerPlan }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
   const { sessionId: paramSessionId, slug = "" } = useParams<{ sessionId?: string; slug?: string }>();
@@ -654,49 +923,9 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
   const handleShowPlanPreview = async () => {
     if (planLoading) return;
 
-    const flights = (tripContext.flights as Array<Record<string, unknown>>) || [];
-    const places = (tripContext.places as Array<Record<string, unknown>>) || [];
-    const dayPlans = (tripContext.dayPlans as Array<Record<string, unknown>>) || [];
-
-    const flightLines = flights.map((f) => {
-      const type = f.type === 'arrival' ? '🛬 נחיתה' : '🛫 המראה';
-      const date = String(f.flightDate || '');
-      const time = f.flightTime ? ` בשעה ${f.flightTime}` : '';
-      const airport = f.airport ? ` — ${f.airport}` : '';
-      return `${type}: ${date}${time}${airport}`;
-    });
-
-    const pinnedLines: string[] = [];
-    for (const day of dayPlans) {
-      const pinned = (day.pinnedPlaceIds as string[]) || [];
-      const times = (day.pinnedTimes as Record<string, string>) || {};
-      for (const placeId of pinned) {
-        const place = places.find((p) => p.id === placeId);
-        const placeName = String(place?.name || placeId);
-        const t = times[placeId] ? ` בשעה ${times[placeId]}` : '';
-        pinnedLines.push(`📌 ${placeName}${t} — ${day.title || ''}`);
-      }
-    }
-
-    const highPriority = places
-      .filter((p) => ((p.priority as number) ?? 3) <= 2)
-      .sort((a, b) => ((a.priority as number) ?? 3) - ((b.priority as number) ?? 3))
-      .map((p) => `⭐ ${p.name} (${p.type || 'אטרקציה'})`);
-
-    const content = [
-      '## 📋 מה ה-AI יודע לפני שמתחיל לתכנן',
-      '',
-      `### ✈️ טיסות (${flights.length})`,
-      ...(flightLines.length ? flightLines : ['לא הוזנו טיסות']),
-      '',
-      `### 📌 מקומות מעוגנים (${pinnedLines.length})`,
-      ...(pinnedLines.length ? pinnedLines : ['אין עיגונים מוגדרים']),
-      '',
-      `### ⭐ עדיפות גבוהה (${highPriority.length})`,
-      ...(highPriority.length ? highPriority : ['אין מקומות בעדיפות גבוהה']),
-      '',
-      '_האם להתחיל תכנון מחדש על בסיס האילוצים האלה?_',
-    ].join('\n');
+    // Single structured model → persisted markdown snapshot; the on-screen render
+    // (priority editable via stars) is rebuilt live from tripContext below.
+    const content = previewModelToMarkdown(buildPreviewModel(tripContext, slug));
 
     let sessionId = activeSessionId;
     let isNewSession = false;
@@ -766,18 +995,53 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
       }) as AiPlanResult;
 
       const totalPlaces = Object.values(planResult.plan).reduce((s, ids) => s + ids.length, 0);
+      const dayPlansCtx = (tripContext.dayPlans as Array<Record<string, unknown>>) || [];
+      const dayTitle = (dayId: string) =>
+        String(dayPlansCtx.find((d) => d.id === dayId)?.title || dayId);
+      const kindIcon: Record<string, string> = {
+        flight: "✈️", transit: "🚆", break: "🍽️", place: "📍",
+      };
+
+      // Render the timed itinerary day-by-day. Per-item notes appear right under
+      // the item; general issues are collected at the end.
+      const scheduleLines: string[] = [];
+      const schedule = planResult.schedule;
+      if (schedule && Object.keys(schedule).length) {
+        const orderedDayIds = [
+          ...dayPlansCtx.map((d) => String(d.id)).filter((id) => schedule[id]),
+          ...Object.keys(schedule).filter((id) => !dayPlansCtx.some((d) => d.id === id)),
+        ];
+        for (const dayId of orderedDayIds) {
+          const items = schedule[dayId] || [];
+          if (!items.length) continue;
+          scheduleLines.push(`### 📅 ${dayTitle(dayId)}`);
+          for (const item of items) {
+            const icon = kindIcon[item.kind] || "•";
+            scheduleLines.push(`**${item.time}** ${icon} ${item.label}`);
+            if (item.note && item.note.trim()) {
+              scheduleLines.push(`   ↳ ⚠️ ${item.note.trim()}`);
+            }
+          }
+          scheduleLines.push("");
+        }
+      }
+
       const planText = [
         `✨ **תוכנית AI מוכנה!** שובצו ${totalPlaces} מקומות`,
         "",
         planResult.summary,
         "",
+        ...scheduleLines,
+        ...(planResult.issues?.length
+          ? ["**⚠️ הערות ובעיות כלליות:**", ...planResult.issues.map((r) => `• ${r}`), ""]
+          : []),
         ...(planResult.recommendations?.length
-          ? ["**המלצות:**", ...planResult.recommendations.map((r) => `• ${r}`), ""]
+          ? ["**💡 המלצות:**", ...planResult.recommendations.map((r) => `• ${r}`), ""]
           : []),
         ...(planResult.excluded?.length
           ? [`**לא נכנסו לתוכנית:** ${planResult.excluded.length} מקומות (חסר זמן או ביקרנו)`, ""]
           : []),
-        "_לחץ **החל תוכנית** כדי לשבץ את המקומות בלו\"ז_",
+        "_לחץ **החל תוכנית** כדי לשבץ את המקומות והשעות בלו\"ז_",
       ].join("\n");
 
       const assistantMsg: ChatMessage = {
@@ -1268,7 +1532,9 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, triggerPl
                 {msg.role === "user" ? "👤" : "🤖"}
               </div>
               <div className="chat-msg-bubble">
-                {renderMessageContent(msg.content, msg.meta)}
+                {msg.meta?.planPreview
+                  ? renderPlanPreviewPanel(buildPreviewModel(tripContext, slug), (path) => navigate(path), onSetPriority)
+                  : renderMessageContent(msg.content, msg.meta, (path) => navigate(path))}
                 {msg.meta?.planData && onApplyPlan && (
                   <button
                     type="button"

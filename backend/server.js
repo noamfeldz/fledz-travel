@@ -1107,18 +1107,35 @@ app.post('/api/trips/:tripId/ai/plan', requireAuth, async (req, res) => {
       '13. העדף מקומות קרובים זה לזה באותו יום כדי לצמצם נסיעות; אם יום מחייב נסיעה ארוכה — ציין זאת בהמלצות כולל אמצעי תחבורה מומלץ',
       '14. מקום מסוג "אירוע" הוא עוגן בשעה נעולה — אסור להזיז אותו מהיום והשעה שלו, תכנן הגעה לפני תחילתו (כולל זמן נסיעה), ואל תשבץ שום דבר שמתנגש בו. אם הוא מתנגש בטיסה — ציין זאת בהמלצות',
       '15. נסיעות מתוזמנות (transits) הן עוגנים נעולים בדיוק כמו טיסות — אל תשבץ מקומות שמתנגשים בהן, ותכנן הגעה לנקודת היציאה לפני שעת היציאה',
+      '16. לכל פריט בלו"ז קבע שעת התחלה (time) בפורמט HH:MM, מעוגל לקפיצות נוחות (00/10/20/30/45). הפריטים בכל יום חייבים להיות מסודרים לפי סדר כרונולוגי עולה',
+      '17. שלב את הטיסות בתוך הלו"ז של היום המתאים כפריט kind:"flight" בשעת ההמראה/נחיתה. שלב נסיעות מתוזמנות כפריט kind:"transit"',
+      '18. אם יש בעיה/הערה ששייכת למקום מסוים (התנגשות שעות, להגיע מוקדם, שעת סגירה, צפוף) — כתוב אותה בשדה note של אותו פריט. בעיות והערות כלליות שלא שייכות למקום בודד — שים אותן ב-issues',
       '',
       systemContext,
       '',
-      'החזר JSON בלבד (ללא markdown, ללא טקסט נוסף):',
-      '{"plan":{"day-1":["id1","id2"],"day-2":["id3"]},"excluded":[{"placeId":"id","reason":"סיבה"}],"recommendations":["המלצה 1"],"summary":"סיכום קצר"}',
+      'החזר JSON בלבד (ללא markdown, ללא טקסט נוסף) במבנה הבא:',
+      'כל יום הוא מערך פריטים כרונולוגי. kind אפשרי: "place" (חובה placeId שתואם id מרשימת המקומות), "flight", "transit", "break".',
+      'note הוא הערה ספציפית לאותו פריט — אם אין, השמט או החזר מחרוזת ריקה.',
+      '{"schedule":{"day-1":[{"time":"09:00","kind":"flight","label":"🛫 המראה TLV→STN","note":""},{"time":"12:30","kind":"place","placeId":"id1","label":"שם המקום","note":"שעת סגירה 17:00 — להגיע מוקדם"}],"day-2":[{"time":"10:00","kind":"place","placeId":"id3","label":"שם","note":""}]},"excluded":[{"placeId":"id","reason":"סיבה"}],"issues":["הערה/בעיה כללית"],"recommendations":["המלצה כללית"],"summary":"סיכום קצר"}',
     ].join('\n');
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
     let text = result.response.text().trim();
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) text = jsonMatch[1].trim();
-    res.json(JSON.parse(text));
+    const parsed = JSON.parse(text);
+    // Derive the legacy `plan` (ordered placeIds per day) from the new timed
+    // `schedule` so existing consumers (applyAiPlan, planner view) keep working.
+    if (parsed.schedule && !parsed.plan) {
+      parsed.plan = {};
+      for (const [dayId, items] of Object.entries(parsed.schedule)) {
+        if (!Array.isArray(items)) continue;
+        parsed.plan[dayId] = items
+          .filter((it) => it && it.kind === 'place' && it.placeId)
+          .map((it) => it.placeId);
+      }
+    }
+    res.json(parsed);
   } catch (e) {
     console.error('AI plan error:', e.message);
     res.status(500).json({ error: e.message });

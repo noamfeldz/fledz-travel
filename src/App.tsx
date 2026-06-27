@@ -59,7 +59,8 @@ type PlannerTimelineEntry =
   | { kind: "transit"; transit: Transit; startHour: number; endHour: number; startLabel: string; endLabel: string; dayPart: string; durationMinutes: number; idleBeforeMinutes: number; }
   | { kind: "place"; place: Place; startHour: number; endHour: number; startLabel: string; endLabel: string; dayPart: string; durationMinutes: number; travelMode: TransportMode; travelMinutes: number; isTight: boolean; leadInLabel: string; idleBeforeMinutes: number; };
 type ChatMessage = { role: "user" | "assistant"; content: string; };
-type AiPlanResult = { plan: Record<string, string[]>; excluded: Array<{ placeId: string; reason: string }>; recommendations: string[]; summary: string; };
+type AiScheduleItem = { time: string; kind: "place" | "flight" | "transit" | "break"; placeId?: string; label: string; note?: string };
+type AiPlanResult = { plan: Record<string, string[]>; schedule?: Record<string, AiScheduleItem[]>; excluded: Array<{ placeId: string; reason: string }>; issues?: string[]; recommendations: string[]; summary: string; };
 type GooglePlacePrediction = {
   place_id: string;
   description: string;
@@ -1081,6 +1082,7 @@ function App() {
   const [openDayMenu, setOpenDayMenu] = useState<string | null>(null);
   const [activePlannerDayId, setActivePlannerDayId] = useState<string | null>(null);
   const [calDrag, setCalDrag] = useState<{ dayId: string; placeId: string; pointerStartY: number; baseHour: number; previewHour: number; moved: boolean } | null>(null);
+  const [calResize, setCalResize] = useState<{ dayId: string; placeId: string; pointerStartY: number; baseDurationHours: number; previewDurationHours: number } | null>(null);
   const plannerDayRefs = useRef<Record<string, HTMLElement | null>>({});
   useEffect(() => { if (!openDayMenu) return; const close = () => setOpenDayMenu(null); document.addEventListener("click", close); return () => document.removeEventListener("click", close); }, [openDayMenu]);
   const selectedPlaceId = getPlaceIdFromPathname(location.pathname);
@@ -1796,6 +1798,7 @@ function App() {
     if (selectedPlaceId === placeId) navigate(viewPaths.home);
   };
   const setPlacePriority = (placeId: string, priority: number) => { const place = places.find((p) => p.id === placeId); if (!place) return; const updated = { ...place, priority }; setPlaces((current) => current.map((p) => p.id === placeId ? updated : p)); apiFetch(`${apiBase}/places/${placeId}`, { method: "PUT", body: JSON.stringify(updated) }).catch(() => {}); };
+  const setPlaceDuration = (placeId: string, minutes: number) => { const place = places.find((p) => p.id === placeId); if (!place) return; const updated = { ...place, visitDurationMinutes: minutes }; setPlaces((current) => current.map((p) => p.id === placeId ? updated : p)); apiFetch(`${apiBase}/places/${placeId}`, { method: "PUT", body: JSON.stringify(updated) }).catch(() => {}); };
   const clearDayPlan = (dayId: string) => setDayPlans((current) => current.map((day) => day.id === dayId ? { ...day, placeIds: [], pinnedPlaceIds: [] } : day));
   const togglePlacePin = (dayId: string, placeId: string) => setDayPlans((current) => current.map((day) => {
     if (day.id !== dayId || !day.placeIds.includes(placeId)) return day;
@@ -1861,13 +1864,26 @@ function App() {
     }
   };
   const applyAiPlan = (result: AiPlanResult | ChatAiPlanResult) => {
+    const schedule = result.schedule;
     setDayPlans((current) => current.map((day) => {
       const aiPlaceIds = result.plan[day.id];
       if (!aiPlaceIds) return day;
       // Keep pinned places and merge AI suggestions
       const pinned = day.pinnedPlaceIds.filter((id) => day.placeIds.includes(id));
       const merged = [...new Set([...pinned, ...aiPlaceIds])];
-      return { ...day, placeIds: merged };
+      // Persist the AI-computed arrival time for each place so the planner shows
+      // the timed schedule. pinnedTimes is honoured as an exact anchor.
+      let pinnedTimes = day.pinnedTimes;
+      const dayItems = schedule?.[day.id];
+      if (dayItems?.length) {
+        pinnedTimes = { ...(day.pinnedTimes || {}) };
+        for (const item of dayItems) {
+          if (item.kind === "place" && item.placeId && item.time) {
+            pinnedTimes[item.placeId] = item.time;
+          }
+        }
+      }
+      return { ...day, placeIds: merged, pinnedTimes };
     }));
     setAiPlanResult(null);
   };
@@ -2749,10 +2765,12 @@ function App() {
                       const meta = segmentMeta[entry.dayPart] ?? { icon: "•", accentClass: "generic" };
                       const placeId = entry.kind === "place" ? entry.place.id : null;
                       const isDragging = !!placeId && calDrag?.dayId === day.id && calDrag?.placeId === placeId;
+                      const isResizing = !!placeId && calResize?.dayId === day.id && calResize?.placeId === placeId;
                       const durationHours = entry.endHour - entry.startHour;
                       const effectiveStart = isDragging && calDrag ? calDrag.previewHour : entry.startHour;
+                      const effectiveDuration = isResizing && calResize ? calResize.previewDurationHours : durationHours;
                       const top = (effectiveStart - bounds.startHour) * CALENDAR_PX_PER_HOUR;
-                      const height = Math.max(CALENDAR_MIN_BLOCK_PX, (entry.endHour - entry.startHour) * CALENDAR_PX_PER_HOUR - 4);
+                      const height = Math.max(CALENDAR_MIN_BLOCK_PX, effectiveDuration * CALENDAR_PX_PER_HOUR - 4);
                       const width = `calc((100% - var(--cal-gutter)) / ${laneCount})`;
                       const offset = `calc(var(--cal-gutter) + ((100% - var(--cal-gutter)) / ${laneCount}) * ${lane})`;
                       const blockClass =
@@ -2777,7 +2795,7 @@ function App() {
                       const isPinned = entry.kind === "place" && day.pinnedPlaceIds.includes(entry.place.id);
                       const pinnedTime = entry.kind === "place" ? day.pinnedTimes?.[entry.place.id] : undefined;
                       const startText = isDragging ? formatClockHalf(effectiveStart) : entry.startLabel;
-                      const endText = isDragging ? formatClockHalf(effectiveStart + durationHours) : entry.endLabel;
+                      const endText = isResizing ? formatClockHalf(effectiveStart + effectiveDuration) : isDragging ? formatClockHalf(effectiveStart + durationHours) : entry.endLabel;
                       const transitNode = entry.kind === "place" && entry.travelMinutes > 0 && !isDragging ? (
                         <div key={`cal-transit-${entry.place.id}`} className="planner-cal-transit" style={{ top: `${Math.max(0, top - 20)}px`, insetInlineStart: offset, width }} aria-hidden="true">
                           <span className="planner-cal-transit-icon">{transitIcon(entry.travelMode)}</span>
@@ -2788,7 +2806,7 @@ function App() {
                         transitNode,
                         <article
                           key={entry.kind === "flight" ? `cal-flight-${entry.flight.id}` : entry.kind === "hotel" ? `cal-hotel-${entry.subKind}-${entry.hotel.id}` : entry.kind === "transit" ? `cal-ride-${entry.transit.id}` : `cal-place-${entry.place.id}`}
-                          className={`${blockClass}${isShort ? " is-short" : ""}${clickable ? " is-clickable is-draggable" : ""}${isDragging ? " is-dragging" : ""}${isPinned ? " is-pinned" : ""}${photoUrl ? " has-photo" : ""}${entry.kind === "place" && openPlaceMenu === `${day.id}:${entry.place.id}` ? " menu-open" : ""}`}
+                          className={`${blockClass}${isShort ? " is-short" : ""}${clickable ? " is-clickable is-draggable" : ""}${isDragging ? " is-dragging" : ""}${isResizing ? " is-resizing" : ""}${isPinned ? " is-pinned" : ""}${photoUrl ? " has-photo" : ""}${entry.kind === "place" && openPlaceMenu === `${day.id}:${entry.place.id}` ? " menu-open" : ""}`}
                           style={{ top: `${top}px`, height: `${height}px`, insetInlineStart: offset, width }}
                           onPointerDown={clickable ? (event) => { if (event.button) return; if ((event.target as HTMLElement).closest(".place-menu-wrap")) return; event.currentTarget.setPointerCapture(event.pointerId); setCalDrag({ dayId: day.id, placeId: entry.place.id, pointerStartY: event.clientY, baseHour: entry.startHour, previewHour: entry.startHour, moved: false }); } : undefined}
                           onPointerMove={clickable ? (event) => { setCalDrag((prev) => { if (!prev || prev.placeId !== entry.place.id || prev.dayId !== day.id) return prev; const deltaHours = (event.clientY - prev.pointerStartY) / CALENDAR_PX_PER_HOUR; const snapped = Math.round((prev.baseHour + deltaHours) * 2) / 2; const clamped = Math.min(bounds.endHour - 0.5, Math.max(bounds.startHour, snapped)); const moved = prev.moved || Math.abs(event.clientY - prev.pointerStartY) > 4; if (clamped === prev.previewHour && moved === prev.moved) return prev; return { ...prev, previewHour: clamped, moved }; }); } : undefined}
@@ -2809,6 +2827,16 @@ function App() {
                             : <span className="planner-cal-block-time">{startText}{!isShort ? ` – ${endText}` : ""}</span>}
                           <strong className="planner-cal-block-title">{title}</strong>
                           {flightDiffNote && !isShort && <span className="planner-cal-block-note">🕒 {flightDiffNote}</span>}
+                          {clickable && (
+                            <span
+                              className="planner-cal-resize"
+                              title={`משך הביקור: ${Math.round(effectiveDuration * 60)} דק׳ · גרור לשינוי`}
+                              aria-hidden="true"
+                              onPointerDown={(event) => { if (event.button) return; event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setCalResize({ dayId: day.id, placeId: entry.place.id, pointerStartY: event.clientY, baseDurationHours: durationHours, previewDurationHours: durationHours }); }}
+                              onPointerMove={(event) => { event.stopPropagation(); setCalResize((prev) => { if (!prev || prev.placeId !== entry.place.id || prev.dayId !== day.id) return prev; const deltaHours = (event.clientY - prev.pointerStartY) / CALENDAR_PX_PER_HOUR; const snapped = Math.round((prev.baseDurationHours + deltaHours) * 2) / 2; const clamped = Math.max(0.5, Math.min(12, snapped)); if (clamped === prev.previewDurationHours) return prev; return { ...prev, previewDurationHours: clamped }; }); }}
+                              onPointerUp={(event) => { event.stopPropagation(); event.currentTarget.releasePointerCapture?.(event.pointerId); if (calResize && calResize.placeId === entry.place.id && calResize.dayId === day.id) { const deltaHours = (event.clientY - calResize.pointerStartY) / CALENDAR_PX_PER_HOUR; const snapped = Math.round((calResize.baseDurationHours + deltaHours) * 2) / 2; const clamped = Math.max(0.5, Math.min(12, snapped)); if (clamped !== calResize.baseDurationHours) setPlaceDuration(entry.place.id, Math.round(clamped * 60)); } setCalResize(null); }}
+                            >⌟</span>
+                          )}
                         </article>,
                       ];
                     })}
@@ -2881,8 +2909,8 @@ function App() {
         </nav>
         <div className="chat-page-wrapper">
           <Routes>
-            <Route path="/chat/:sessionId" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} onAction={handleChatAction} />} />
-            <Route path="/chat" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} onAction={handleChatAction} triggerPlan={location.search.includes("trigger=plan")} />} />
+            <Route path="/chat/:sessionId" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} onAction={handleChatAction} onSetPriority={setPlacePriority} />} />
+            <Route path="/chat" element={<ChatPage tripContext={tripContext} onApplyPlan={applyAiPlan} onAction={handleChatAction} onSetPriority={setPlacePriority} triggerPlan={location.search.includes("trigger=plan")} />} />
           </Routes>
         </div>
       </div>

@@ -3636,6 +3636,34 @@ input:focus, select:focus, textarea:focus {
   display: list-item;
 }
 .chat-msg-text br { display: block; margin: 0.2rem 0; }
+.chat-msg-link {
+  color: var(--color-accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.chat-msg-link:hover { filter: brightness(1.1); }
+.plan-preview .prio-group { margin: 0.4rem 0 0.6rem; }
+.plan-preview .prio-group-title { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.92rem; }
+.plan-preview .prio-row { display: flex; align-items: center; gap: 0.45rem; margin: 0.18rem 0; flex-wrap: wrap; }
+.prio-stars { display: inline-flex; gap: 1px; flex-shrink: 0; }
+.prio-star {
+  background: none;
+  border: none;
+  padding: 0 1px;
+  cursor: pointer;
+  line-height: 1;
+  font-size: 1.05rem;
+  color: #5b6573;
+  transition: transform 0.08s ease, color 0.08s ease;
+}
+.prio-star.filled { color: #f5b301; }
+.prio-star:not(:disabled):hover { transform: scale(1.2); }
+.prio-star:disabled { cursor: default; }
+.prio-pin { font-size: 1rem; flex-shrink: 0; }
+.prio-when, .prio-visited { color: #9aa4b2; font-size: 0.82rem; }
+.prio-hint { margin-top: 0.6rem; opacity: 0.85; font-size: 0.82rem; }
 
 .chat-apply-plan-btn {
   display: block;
@@ -7330,6 +7358,44 @@ label {
 }
 
 .planner-cal-block.is-dragging .planner-cal-block-time {
+  color: #fff;
+}
+
+.planner-cal-block.is-resizing {
+  z-index: 30;
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.6);
+  transition: none;
+}
+
+/* Bottom-left grip to drag the visit duration (block height). */
+.planner-cal-resize {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  width: 22px;
+  height: 22px;
+  padding: 1px 3px;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: ns-resize;
+  touch-action: none;
+  opacity: 0.5;
+  transition: opacity 0.12s ease, color 0.12s ease;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+.planner-cal-block.is-clickable:hover .planner-cal-resize,
+.planner-cal-block.is-resizing .planner-cal-resize {
+  opacity: 1;
+}
+
+.planner-cal-resize:hover {
   color: #fff;
 }
 
