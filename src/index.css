@@ -753,16 +753,67 @@ input:focus, select:focus, textarea:focus {
 /* Place Detail View */
 .panel.place-detail-hero {
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
   border: none;
   background: transparent;
   box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
 }
 
 .place-detail-media-column {
   display: grid;
   gap: 1.25rem;
   align-content: start;
+}
+
+.place-breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.place-breadcrumb-link {
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.place-breadcrumb-link:hover {
+  background: none;
+  color: var(--color-accent);
+  transform: none;
+  box-shadow: none;
+}
+
+.place-breadcrumb-sep {
+  color: var(--color-text-muted);
+  opacity: 0.55;
+}
+
+.place-breadcrumb-current {
+  color: var(--color-text-main);
+  font-weight: 700;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55vw;
+}
+
+.place-detail-image-wrap {
+  position: relative;
 }
 
 .place-detail-image {
@@ -772,16 +823,57 @@ input:focus, select:focus, textarea:focus {
   border-radius: var(--radius-md);
   margin-bottom: 0;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  display: block;
+}
+
+.refresh-photo-button {
+  position: absolute;
+  top: 12px;
+  inset-inline-end: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(17, 24, 39, 0.72);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.refresh-photo-button:hover:not(:disabled) {
+  background: var(--color-accent, rgba(17, 24, 39, 0.92));
+  transform: translateY(-1px);
+}
+
+.refresh-photo-button:disabled {
+  cursor: progress;
+  opacity: 0.85;
 }
 
 @media (min-width: 768px) {
-  .place-detail-hero {
+  .panel.place-detail-hero {
     display: grid;
     grid-template-columns: 1fr 1.1fr;
-    gap: 2.5rem;
+    grid-template-areas:
+      "crumbs crumbs"
+      "image content"
+      "focus content";
+    align-content: start;
+    column-gap: 2.5rem;
+    row-gap: 1.5rem;
   }
-  
-  .place-detail-media-column .place-detail-image {
+
+  .place-breadcrumbs { grid-area: crumbs; }
+  .place-detail-image-block { grid-area: image; }
+  .place-detail-hero > .place-detail-content { grid-area: content; align-self: start; }
+  .place-detail-focus { grid-area: focus; }
+
+  .place-detail-image {
     height: 380px;
   }
 }
@@ -827,11 +919,18 @@ input:focus, select:focus, textarea:focus {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: 2rem;
+  padding: 1.25rem;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.03);
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.25rem;
+}
+
+@media (min-width: 768px) {
+  .place-detail-content {
+    padding: 2rem;
+    gap: 1.5rem;
+  }
 }
 
 .place-detail-head {
@@ -1777,6 +1876,31 @@ input:focus, select:focus, textarea:focus {
 .priority-pip-row {
   display: flex;
   gap: 0.25rem;
+}
+
+.location-priority-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.75rem 0 0.25rem;
+  flex-wrap: wrap;
+}
+
+.location-priority-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-main);
+}
+
+.location-priority-inline .priority-pip-row {
+  flex: 1;
+  min-width: 180px;
+  max-width: 320px;
+}
+
+.location-priority-inline .priority-pip {
+  padding: 0.4rem 0;
+  font-size: 0.9rem;
 }
 
 .priority-pip {
@@ -4880,6 +5004,13 @@ textarea {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
+/* Native <select> dropdowns render their popup with the OS background; without an
+   explicit option color the dark-theme light text becomes unreadable gray-on-white. */
+select option {
+  background: var(--color-surface-strong, #121212);
+  color: var(--color-text-main);
+}
+
 input::placeholder,
 textarea::placeholder {
   color: rgba(255, 255, 255, 0.34);
@@ -5338,6 +5469,39 @@ label {
 
 .place-grid {
   gap: 1.2rem;
+}
+
+.place-type-group {
+  margin-bottom: 2.25rem;
+}
+
+.place-type-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 1rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.place-type-group-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--color-text-main);
+}
+
+.place-type-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6rem;
+  height: 1.6rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
 .place-card {

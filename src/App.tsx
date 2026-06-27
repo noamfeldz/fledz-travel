@@ -931,6 +931,8 @@ function App() {
   const [placeFormState, setPlaceFormState] = useState<{ tone: "idle" | "loading" | "success" | "error"; message: string }>({ tone: "idle", message: "" });
   const [enrichingPlaceIds, setEnrichingPlaceIds] = useState<Set<string>>(new Set());
   const [enrichErrors, setEnrichErrors] = useState<Record<string, string>>({});
+  const [refetchingPhotoIds, setRefetchingPhotoIds] = useState<Set<string>>(new Set());
+  const [photoRefetchError, setPhotoRefetchError] = useState<Record<string, string>>({});
   const [bulkEnrich, setBulkEnrich] = useState<{ running: boolean; done: number; total: number } | null>(null);
   const [importUrl, setImportUrl] = useState("");
   // Debounce auto-import when user types a link
@@ -1109,7 +1111,10 @@ function App() {
             const formattedAddress = place.formattedAddress || "";
             const latitude = place.location?.lat?.();
             const longitude = place.location?.lng?.();
-            const photoUrl = place.photos?.[0]?.getUrl?.({ maxWidth: 1400, maxHeight: 900 }) || "";
+            const photoUrl =
+              place.photos?.[0]?.getURI?.({ maxWidth: 1400, maxHeight: 900 }) ||
+              place.photos?.[0]?.getUrl?.({ maxWidth: 1400, maxHeight: 900 }) ||
+              "";
             const area = extractAreaFromAddressComponents(place.addressComponents);
             const openingHours = place.regularOpeningHours?.weekdayDescriptions?.join(" | ") || "";
 
@@ -1217,7 +1222,10 @@ function App() {
             const formattedAddress = place.formattedAddress || "";
             const latitude = place.location?.lat?.();
             const longitude = place.location?.lng?.();
-            const photoUrl = place.photos?.[0]?.getUrl?.({ maxWidth: 1400, maxHeight: 900 }) || "";
+            const photoUrl =
+              place.photos?.[0]?.getURI?.({ maxWidth: 1400, maxHeight: 900 }) ||
+              place.photos?.[0]?.getUrl?.({ maxWidth: 1400, maxHeight: 900 }) ||
+              "";
             setHotelDraft((current) => ({
               ...current,
               name: displayName || current.name,
@@ -1252,6 +1260,16 @@ function App() {
     };
   }, [isEditingHotel, showHotelEditDialog]); // eslint-disable-line react-hooks/exhaustive-deps
   const filteredPlaces = useMemo(() => places.filter((place) => { const q = query.toLowerCase(); const matchesQuery = !query.trim() || place.name.toLowerCase().includes(q) || place.shortDescription.toLowerCase().includes(q) || place.address.toLowerCase().includes(q); const matchesType = typeFilter === "הכול" || place.type === typeFilter; const matchesArea = areaFilter === "הכול" || place.area === areaFilter; return matchesQuery && matchesType && matchesArea; }), [areaFilter, places, query, typeFilter]);
+  const placesByType = useMemo(() => {
+    const groups: { type: string; places: Place[] }[] = placeTypes.map((type) => ({
+      type,
+      places: filteredPlaces.filter((place) => place.type === type).sort((a, b) => (b.priority ?? 3) - (a.priority ?? 3)),
+    }));
+    const knownTypes = new Set<string>(placeTypes);
+    const otherPlaces = filteredPlaces.filter((place) => !knownTypes.has(place.type)).sort((a, b) => (b.priority ?? 3) - (a.priority ?? 3));
+    if (otherPlaces.length) groups.push({ type: "אחר", places: otherPlaces });
+    return groups.filter((group) => group.places.length > 0);
+  }, [filteredPlaces]);
   const areaOptions = useMemo(() => baseAreas.concat(places.map((place) => place.area).filter(Boolean)).filter((area, index, all) => all.indexOf(area) === index), [places]);
   const assignedDayByPlaceId = useMemo(() => dayPlans.reduce<Record<string, string>>((result, day) => {
     day.placeIds.forEach((placeId) => {
@@ -1414,6 +1432,40 @@ function App() {
       return false;
     } finally {
       setEnrichingPlaceIds((prev) => { const next = new Set(prev); next.delete(placeId); return next; });
+    }
+  };
+  // Re-pull the place photo from Google Places using the saved google_place_id
+  const refetchPlacePhoto = async (place: Place) => {
+    if (!place.googlePlaceId) {
+      setPhotoRefetchError((prev) => ({ ...prev, [place.id]: "אין מזהה Google Place שמור למקום הזה — אי אפשר למשוך תמונה אוטומטית." }));
+      return;
+    }
+    if (!GOOGLE_MAPS_API_KEY) {
+      setPhotoRefetchError((prev) => ({ ...prev, [place.id]: "אין מפתח Google Maps זמין." }));
+      return;
+    }
+    setRefetchingPhotoIds((prev) => new Set(prev).add(place.id));
+    setPhotoRefetchError((prev) => ({ ...prev, [place.id]: "" }));
+    try {
+      const placesLibrary = await importPlacesLibrary();
+      const { Place: GooglePlace } = placesLibrary as { Place: new (options: { id: string }) => any };
+      const googlePlace = new GooglePlace({ id: place.googlePlaceId });
+      await googlePlace.fetchFields({ fields: ["photos"] });
+      const photoUrl =
+        googlePlace.photos?.[0]?.getURI?.({ maxWidth: 1400, maxHeight: 900 }) ||
+        googlePlace.photos?.[0]?.getUrl?.({ maxWidth: 1400, maxHeight: 900 }) ||
+        "";
+      if (!photoUrl) {
+        setPhotoRefetchError((prev) => ({ ...prev, [place.id]: "לא נמצאה תמונה ב-Google למקום הזה." }));
+        return;
+      }
+      const updated: Place = { ...place, imageUrl: photoUrl };
+      setPlaces((current) => current.map((p) => p.id === place.id ? updated : p));
+      apiFetch(`${apiBase}/places`, { method: "POST", body: JSON.stringify(updated) }).catch(() => {});
+    } catch (error) {
+      setPhotoRefetchError((prev) => ({ ...prev, [place.id]: `שליפת התמונה נכשלה — אפשר לנסות שוב. (${error instanceof Error ? error.message : String(error)})` }));
+    } finally {
+      setRefetchingPhotoIds((prev) => { const next = new Set(prev); next.delete(place.id); return next; });
     }
   };
   const enrichAllPlaces = async () => {
@@ -1650,6 +1702,13 @@ function App() {
     const newPinnedTimes = { ...(day.pinnedTimes || {}) };
     if (time) newPinnedTimes[placeId] = time; else delete newPinnedTimes[placeId];
     return { ...day, pinnedPlaceIds: day.pinnedPlaceIds.includes(placeId) ? day.pinnedPlaceIds : [...day.pinnedPlaceIds, placeId], pinnedTimes: newPinnedTimes };
+  }));
+  // Update the time anchor only (e.g. dragging a block in the calendar) without pinning the place.
+  const setPlaceTime = (dayId: string, placeId: string, time: string) => setDayPlans((current) => current.map((day) => {
+    if (day.id !== dayId || !day.placeIds.includes(placeId)) return day;
+    const newPinnedTimes = { ...(day.pinnedTimes || {}) };
+    if (time) newPinnedTimes[placeId] = time; else delete newPinnedTimes[placeId];
+    return { ...day, pinnedTimes: newPinnedTimes };
   }));
   const autoFillWeek = () => setDayPlans((current) => autoDistributeWeek(current, places, hotels[0] ?? defaultHotel, visitedIds, tripConfig, flights));
   const toggleVisited = (placeId: string) => setVisitedIds((current) => current.includes(placeId) ? current.filter((id) => id !== placeId) : [...current, placeId]);
@@ -1908,36 +1967,31 @@ function App() {
 
     return (
       <section className={`panel place-detail-hero${isModal ? " place-detail-modal-card" : ""}`}>
-        <div className="place-detail-media-column">
-          <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-detail-image" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} />
-          <section className="place-focus-panel">
-            <div className="place-focus-panel-head">
-              <div>
-                <h3>מיקום על המפה</h3>
-                <p>{transport.mode} מהמלון · {transport.minutes} דק' · {formatDistance(haversineKm(hotels[0] ?? defaultHotel, place))}</p>
-              </div>
-            </div>
-            <PlaceFocusMap place={place} nearbyPlaces={nearbyPlaces.map((item) => item.place)} hotel={hotels[0] ?? defaultHotel} />
-            {!!nearbyPlaces.length && (
-              <div className="nearby-places-block">
-                <div className="nearby-places-head">
-                  <strong>עוד מקומות קרובים מהרשימה</strong>
-                  <span>{nearbyPlaces.length} הכי קרובים</span>
-                </div>
-                <div className="nearby-places-list">
-                  {nearbyPlaces.map(({ place: nearbyPlace, distanceKm }) => (
-                    <button key={nearbyPlace.id} type="button" className="nearby-place-card" onClick={() => openPlacePage(nearbyPlace.id)}>
-                      <div className="nearby-place-card-text">
-                        <strong>{nearbyPlace.name}</strong>
-                        <span>{nearbyPlace.area || nearbyPlace.station || nearbyPlace.type}</span>
-                      </div>
-                      <span className="nearby-place-distance">{formatDistance(distanceKm)}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
+        {!isModal && (
+          <nav className="place-breadcrumbs" aria-label="ניווט">
+            <button type="button" className="place-breadcrumb-link" onClick={() => navigate("/dashboard")}>הטיולים שלי</button>
+            <span className="place-breadcrumb-sep" aria-hidden="true">›</span>
+            <button type="button" className="place-breadcrumb-link" onClick={() => navigate(viewPaths.home)}>{tripConfig.tripName || tripConfig.destination || "מקומות"}</button>
+            <span className="place-breadcrumb-sep" aria-hidden="true">›</span>
+            <span className="place-breadcrumb-current">{place.name}</span>
+          </nav>
+        )}
+        <div className="place-detail-image-block">
+          <div className="place-detail-image-wrap">
+            <img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-detail-image" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} />
+            <button
+              type="button"
+              className="refresh-photo-button"
+              onClick={() => refetchPlacePhoto(place)}
+              disabled={refetchingPhotoIds.has(place.id)}
+              title="משוך תמונה מחדש מ-Google"
+              aria-label="משוך תמונה מחדש מ-Google"
+            >
+              {refetchingPhotoIds.has(place.id) ? "⏳" : "🔄"}
+              <span>{refetchingPhotoIds.has(place.id) ? "מושך תמונה..." : "תמונה מ-Google"}</span>
+            </button>
+          </div>
+          {photoRefetchError[place.id] && <p className="form-message error">{photoRefetchError[place.id]}</p>}
         </div>
 
         {isEditingThisPlace ? (
@@ -2316,6 +2370,24 @@ function App() {
               </button>
             </div>
 
+            <div className="location-priority-inline">
+              <span className="location-priority-label">⭐ עדיפות</span>
+              <div className="priority-pip-row">
+                {[1, 2, 3, 4, 5].map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    className={`priority-pip${(place.priority ?? 3) === level ? " active" : ""}`}
+                    onClick={() => setPlacePriority(place.id, level)}
+                    aria-pressed={(place.priority ?? 3) === level}
+                    title={level === 1 ? "נמוכה" : level === 3 ? "בינונית" : level === 5 ? "גבוהה" : `עדיפות ${level}`}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="location-info-grid">
               <div className="info-card">
                 <span className="info-card-icon">📍</span>
@@ -2401,6 +2473,35 @@ function App() {
             )}
           </div>
         )}
+
+        <section className="place-focus-panel place-detail-focus">
+          <div className="place-focus-panel-head">
+            <div>
+              <h3>מיקום על המפה</h3>
+              <p>{transport.mode} מהמלון · {transport.minutes} דק' · {formatDistance(haversineKm(hotels[0] ?? defaultHotel, place))}</p>
+            </div>
+          </div>
+          <PlaceFocusMap place={place} nearbyPlaces={nearbyPlaces.map((item) => item.place)} hotel={hotels[0] ?? defaultHotel} />
+          {!!nearbyPlaces.length && (
+            <div className="nearby-places-block">
+              <div className="nearby-places-head">
+                <strong>עוד מקומות קרובים מהרשימה</strong>
+                <span>{nearbyPlaces.length} הכי קרובים</span>
+              </div>
+              <div className="nearby-places-list">
+                {nearbyPlaces.map(({ place: nearbyPlace, distanceKm }) => (
+                  <button key={nearbyPlace.id} type="button" className="nearby-place-card" onClick={() => openPlacePage(nearbyPlace.id)}>
+                    <div className="nearby-place-card-text">
+                      <strong>{nearbyPlace.name}</strong>
+                      <span>{nearbyPlace.area || nearbyPlace.station || nearbyPlace.type}</span>
+                    </div>
+                    <span className="nearby-place-distance">{formatDistance(distanceKm)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
       </section>
     );
   };
@@ -2574,7 +2675,7 @@ function App() {
                           style={{ top: `${top}px`, height: `${height}px`, insetInlineStart: offset, width }}
                           onPointerDown={clickable ? (event) => { if (event.button) return; if ((event.target as HTMLElement).closest(".place-menu-wrap")) return; event.currentTarget.setPointerCapture(event.pointerId); setCalDrag({ dayId: day.id, placeId: entry.place.id, pointerStartY: event.clientY, baseHour: entry.startHour, previewHour: entry.startHour, moved: false }); } : undefined}
                           onPointerMove={clickable ? (event) => { setCalDrag((prev) => { if (!prev || prev.placeId !== entry.place.id || prev.dayId !== day.id) return prev; const deltaHours = (event.clientY - prev.pointerStartY) / CALENDAR_PX_PER_HOUR; const snapped = Math.round((prev.baseHour + deltaHours) * 2) / 2; const clamped = Math.min(bounds.endHour - 0.5, Math.max(bounds.startHour, snapped)); const moved = prev.moved || Math.abs(event.clientY - prev.pointerStartY) > 4; if (clamped === prev.previewHour && moved === prev.moved) return prev; return { ...prev, previewHour: clamped, moved }; }); } : undefined}
-                          onPointerUp={clickable ? (event) => { event.currentTarget.releasePointerCapture?.(event.pointerId); if (calDrag && calDrag.placeId === entry.place.id && calDrag.dayId === day.id) { const deltaHours = (event.clientY - calDrag.pointerStartY) / CALENDAR_PX_PER_HOUR; const snapped = Math.round((calDrag.baseHour + deltaHours) * 2) / 2; const clamped = Math.min(bounds.endHour - 0.5, Math.max(bounds.startHour, snapped)); if (Math.abs(event.clientY - calDrag.pointerStartY) > 4 && clamped !== calDrag.baseHour) setPinWithTime(day.id, entry.place.id, formatClockHalf(clamped)); else openPlacePage(entry.place.id); } setCalDrag(null); } : undefined}
+                          onPointerUp={clickable ? (event) => { event.currentTarget.releasePointerCapture?.(event.pointerId); if (calDrag && calDrag.placeId === entry.place.id && calDrag.dayId === day.id) { const deltaHours = (event.clientY - calDrag.pointerStartY) / CALENDAR_PX_PER_HOUR; const snapped = Math.round((calDrag.baseHour + deltaHours) * 2) / 2; const clamped = Math.min(bounds.endHour - 0.5, Math.max(bounds.startHour, snapped)); if (Math.abs(event.clientY - calDrag.pointerStartY) > 4 && clamped !== calDrag.baseHour) setPlaceTime(day.id, entry.place.id, formatClockHalf(clamped)); else openPlacePage(entry.place.id); } setCalDrag(null); } : undefined}
                           onKeyDown={clickable ? (event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(entry.place.id); } } : undefined}
                           role={clickable ? "button" : undefined}
                           tabIndex={clickable ? 0 : undefined}
@@ -2740,13 +2841,22 @@ function App() {
                 </select>
               </div>
             </section>
-            <section className="place-grid">
-              {filteredPlaces.map((place) => {
-                const assignedDayId = assignedDayByPlaceId[place.id] || "";
-                const isPinned = Boolean(pinnedDayByPlaceId[place.id]);
-                return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" loading="lazy" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>;
-              })}
-            </section>
+            {placesByType.length === 0 && <p className="settings-empty">לא נמצאו מקומות שתואמים לסינון.</p>}
+            {placesByType.map(({ type, places: typePlaces }) => (
+              <section key={type} className="place-type-group">
+                <header className="place-type-group-head">
+                  <span className="place-type-group-title">{placeTypeMeta[type]?.emoji ?? "📍"} {type}</span>
+                  <span className="place-type-group-count">{typePlaces.length}</span>
+                </header>
+                <div className="place-grid">
+                  {typePlaces.map((place) => {
+                    const assignedDayId = assignedDayByPlaceId[place.id] || "";
+                    const isPinned = Boolean(pinnedDayByPlaceId[place.id]);
+                    return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" loading="lazy" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>;
+                  })}
+                </div>
+              </section>
+            ))}
           </>
         )}
         {!selectedPlaceId && activeView === "hotel" && (
