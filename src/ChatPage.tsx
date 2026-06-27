@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { deriveLocationBias, importPlacesLibrary } from "./googleMapsLoader";
 
@@ -274,8 +274,8 @@ function extractDisplayContent(content: string) {
 
 // Inline markdown: **bold** and [text](url) links. Internal links (starting with
 // "/") navigate within the SPA via onNavigate instead of a full page reload.
-function renderInline(text: string, onNavigate?: (path: string) => void): Array<string | JSX.Element> {
-  const nodes: Array<string | JSX.Element> = [];
+function renderInline(text: string, onNavigate?: (path: string) => void): ReactNode[] {
+  const nodes: ReactNode[] = [];
   const regex = /\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*/g;
   let last = 0;
   let match: RegExpExecArray | null;
