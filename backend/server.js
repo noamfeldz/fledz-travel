@@ -375,7 +375,7 @@ app.get('/api/share/:token', async (req, res) => {
       hotel: hotel.rows.map(rowToHotel),
       dayPlans: plans.rows.map((r) => ({ id: r.id, title: r.title, placeIds: r.place_ids, pinnedPlaceIds: r.pinned_place_ids ?? [], pinnedTimes: r.pinned_times ?? {} })),
       tripConfig: config.rows[0] ? { tripName: config.rows[0].trip_name, dayStartHour: config.rows[0].day_start_hour, dayEndHour: config.rows[0].day_end_hour, lunchBreakStart: config.rows[0].lunch_break_start, lunchBreakEnd: config.rows[0].lunch_break_end, destination: config.rows[0].destination, startDate: config.rows[0].start_date ?? '', numDays: config.rows[0].num_days ?? 7 } : null,
-      flights: flights.rows.map((r) => ({ id: r.id, type: r.type, flightDate: r.flight_date, flightTime: r.flight_time, airport: r.airport, flightNumber: r.flight_number, transferMinutes: r.transfer_minutes, notes: r.notes })),
+      flights: flights.rows.map(rowToFlight),
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -483,8 +483,8 @@ app.post('/api/share/:token/copy', requireAuth, async (req, res) => {
     // Copy flights
     for (const f of srcFlights.rows) {
       await query(
-        'INSERT INTO flights (id, trip_id, type, flight_date, flight_time, airport, flight_number, transfer_minutes, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-        [`flight-${uuidv4().slice(0,8)}`, newTripId, f.type, f.flight_date, f.flight_time, f.airport, f.flight_number, f.transfer_minutes, f.notes]
+        'INSERT INTO flights (id, trip_id, type, flight_date, flight_time, airport, flight_number, transfer_minutes, notes, arrival_time, arrival_date, departure_timezone, arrival_timezone) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
+        [`flight-${uuidv4().slice(0,8)}`, newTripId, f.type, f.flight_date, f.flight_time, f.airport, f.flight_number, f.transfer_minutes, f.notes, f.arrival_time ?? '', f.arrival_date ?? null, f.departure_timezone ?? '', f.arrival_timezone ?? '']
       );
     }
 
@@ -532,6 +532,23 @@ function rowToPlace(r) {
     visitDurationMinutes: r.visit_duration_minutes ?? undefined,
     entryCost: r.entry_cost ?? undefined,
     aiNotes: r.ai_notes ?? undefined,
+  };
+}
+
+function rowToFlight(r) {
+  return {
+    id: r.id,
+    type: r.type,
+    flightDate: r.flight_date,
+    flightTime: r.flight_time,
+    airport: r.airport,
+    flightNumber: r.flight_number || undefined,
+    transferMinutes: r.transfer_minutes,
+    notes: r.notes,
+    arrivalTime: r.arrival_time || '',
+    arrivalDate: r.arrival_date ?? '',
+    departureTimezone: r.departure_timezone || '',
+    arrivalTimezone: r.arrival_timezone || '',
   };
 }
 
@@ -968,7 +985,7 @@ app.put('/api/trips/:tripId/trip-config', requireAuth, async (req, res) => {
 app.get('/api/trips/:tripId/flights', requireAuth, async (req, res) => {
   try {
     const result = await query('SELECT * FROM flights WHERE trip_id=$1 ORDER BY flight_date ASC, flight_time ASC', [req.params.tripId]);
-    res.json(result.rows.map((r) => ({ id: r.id, type: r.type, flightDate: r.flight_date, flightTime: r.flight_time, airport: r.airport, flightNumber: r.flight_number || undefined, transferMinutes: r.transfer_minutes, notes: r.notes })));
+    res.json(result.rows.map(rowToFlight));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -977,10 +994,10 @@ app.post('/api/trips/:tripId/flights', requireAuth, async (req, res) => {
     const f = req.body;
     const id = f.id || `flight-${uuidv4().slice(0, 8)}`;
     await query(
-      `INSERT INTO flights (id, trip_id, type, flight_date, flight_time, airport, flight_number, transfer_minutes, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       ON CONFLICT (id) DO UPDATE SET trip_id=$2, type=$3, flight_date=$4, flight_time=$5, airport=$6, flight_number=$7, transfer_minutes=$8, notes=$9`,
-      [id, req.params.tripId, f.type, f.flightDate, f.flightTime, f.airport ?? '', f.flightNumber ?? '', f.transferMinutes ?? 45, f.notes ?? '']
+      `INSERT INTO flights (id, trip_id, type, flight_date, flight_time, airport, flight_number, transfer_minutes, notes, arrival_time, arrival_date, departure_timezone, arrival_timezone)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ON CONFLICT (id) DO UPDATE SET trip_id=$2, type=$3, flight_date=$4, flight_time=$5, airport=$6, flight_number=$7, transfer_minutes=$8, notes=$9, arrival_time=$10, arrival_date=$11, departure_timezone=$12, arrival_timezone=$13`,
+      [id, req.params.tripId, f.type, f.flightDate, f.flightTime, f.airport ?? '', f.flightNumber ?? '', f.transferMinutes ?? 45, f.notes ?? '', f.arrivalTime ?? '', f.arrivalDate || null, f.departureTimezone ?? '', f.arrivalTimezone ?? '']
     );
     res.status(201).json({ id });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1053,7 +1070,7 @@ app.put('/api/trip-config', async (_req, res) => res.json({ ok: true }));
 app.get('/api/flights', async (_req, res) => {
   try {
     const result = await query('SELECT * FROM flights ORDER BY flight_date ASC, flight_time ASC');
-    res.json(result.rows.map((r) => ({ id: r.id, type: r.type, flightDate: r.flight_date, flightTime: r.flight_time, airport: r.airport, flightNumber: r.flight_number || undefined, transferMinutes: r.transfer_minutes, notes: r.notes })));
+    res.json(result.rows.map(rowToFlight));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/flights', async (_req, res) => res.json({ ok: true }));

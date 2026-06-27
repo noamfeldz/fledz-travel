@@ -48,7 +48,7 @@ type Hotel = {
 type HotelDraft = { name: string; address: string; lat: string; lng: string; checkInDate: string; checkInTime: string; checkOutDate: string; checkOutTime: string; imageUrl: string; googlePlaceId: string; googleMapsUrl: string; websiteUrl: string; phoneNumber: string; rating: string; };
 type DayPlan = { id: string; title: string; placeIds: string[]; pinnedPlaceIds: string[]; pinnedTimes?: Record<string, string>; dayEndHour?: number; };
 type TripConfig = { tripName: string; dayStartHour: number; dayEndHour: number; lunchBreakStart: number; lunchBreakEnd: number; destination: string; startDate?: string; numDays?: number; };
-type Flight = { id: string; type: "arrival" | "departure"; flightDate: string; flightTime: string; airport: string; flightNumber?: string; transferMinutes: number; notes: string; };
+type Flight = { id: string; type: "arrival" | "departure"; flightDate: string; flightTime: string; airport: string; flightNumber?: string; transferMinutes: number; notes: string; arrivalTime?: string; arrivalDate?: string; departureTimezone?: string; arrivalTimezone?: string; };
 type Transit = { id: string; dayId: string; fromLabel: string; toLabel: string; departTime: string; arriveTime: string; mode: string; line: string; cost: string; notes: string; };
 type PlannerFlightPhase = "outbound" | "return";
 type PlannerDayFlightEntry = { flight: Flight; phase: PlannerFlightPhase; startHour: number; endHour: number; dayPart: string; };
@@ -256,6 +256,8 @@ function TypeChip({ type }: { type: string }) {
   const meta = placeTypeMeta[type];
   return <span className={`chip ${meta?.cls ?? ""}`}>{meta ? `${meta.emoji} ` : ""}{type}</span>;
 }
+// Heat scale for priority: cool/low → warm/high. Light tints so they stay readable on the dark theme.
+const priorityColors: Record<number, string> = { 1: "#9aa4b2", 2: "#60a5fa", 3: "#fbbf24", 4: "#fb923c", 5: "#f87171" };
 const baseAreas = ["הכול", "South Bank", "Central London", "South Kensington", "Camden"];
 function makeTripPaths(slug: string): Record<ViewKey, string> {
   const base = slug ? `/${slug}` : "";
@@ -370,6 +372,108 @@ function extractArrivalHourFromFlightNotes(notes: string | null | undefined) {
   if (!matches.length) return null;
   return parseHourValue(matches[matches.length - 1][1]);
 }
+// Prefer the explicit arrival_time field; fall back to the legacy notes regex for
+// flights created before timezone fields existed.
+function getFlightArrivalHour(flight: Flight) {
+  return parseHourValue(flight.arrivalTime) ?? extractArrivalHourFromFlightNotes(flight.notes);
+}
+// Timezone choices offered in the flight form. value = IANA id, label = Hebrew city.
+const TIMEZONE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "Asia/Jerusalem", label: "ישראל" },
+  { value: "Europe/London", label: "לונדון" },
+  { value: "Europe/Paris", label: "פריז / מרכז אירופה" },
+  { value: "Europe/Athens", label: "אתונה / מזרח אירופה" },
+  { value: "America/New_York", label: "ניו יורק" },
+  { value: "Asia/Dubai", label: "דובאי" },
+  { value: "Asia/Bangkok", label: "בנגקוק" },
+  { value: "Asia/Tokyo", label: "טוקיו" },
+];
+function timezoneLabel(tz: string | undefined | null) {
+  if (!tz) return "";
+  const known = TIMEZONE_OPTIONS.find((option) => option.value === tz);
+  if (known) return known.label;
+  const segment = tz.split("/").pop() || tz;
+  return segment.replace(/_/g, " ");
+}
+// DST-correct UTC offset (minutes) for a timezone on a given date, via Intl.
+function timezoneOffsetMinutes(tz: string, dateKey: string | undefined) {
+  try {
+    const base = isValidDateKey(dateKey) ? `${dateKey}T12:00:00Z` : new Date().toISOString().slice(0, 10) + "T12:00:00Z";
+    const date = new Date(base);
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(date).reduce<Record<string, string>>((acc, part) => { acc[part.type] = part.value; return acc; }, {});
+    const asUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour) % 24, Number(parts.minute), Number(parts.second));
+    return Math.round((asUTC - date.getTime()) / 60000);
+  } catch {
+    return null;
+  }
+}
+// Pull the two endpoint codes out of an "TLV → STN (London Stansted)" route string.
+function splitAirportRoute(airport: string | undefined | null) {
+  if (!airport) return null;
+  const parts = airport.split(/→|->|⟶|—|–|-/).map((segment) => segment.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const code = (segment: string) => segment.match(/[A-Z]{3}/)?.[0] || segment.split(/[\s(]/)[0];
+  return { from: code(parts[0]), to: code(parts[1]) };
+}
+// Endpoint labels for a flight: prefer airport codes, fall back to timezone city.
+function getFlightEndpointLabels(flight: Flight) {
+  const route = splitAirportRoute(flight.airport);
+  return {
+    from: route?.from || timezoneLabel(flight.departureTimezone) || "המראה",
+    to: route?.to || timezoneLabel(flight.arrivalTimezone) || "נחיתה",
+  };
+}
+// Sensible default zones for a round trip out of Israel: a "departure" leg flies
+// Israel → abroad, a "return"/arrival leg flies abroad → Israel.
+function defaultFlightTimezones(type: "arrival" | "departure") {
+  return type === "departure"
+    ? { departure: "Asia/Jerusalem", arrival: "Europe/London" }
+    : { departure: "Europe/London", arrival: "Asia/Jerusalem" };
+}
+function formatHebrewHours(hours: number) {
+  if (hours === 1) return "שעה";
+  if (hours === 2) return "שעתיים";
+  return `${Number(hours.toFixed(1))} שעות`;
+}
+// True flight duration in hours, computed from both wall-clock endpoints and their
+// timezones (so a 12:30 TLV → 15:55 STN hop is the real ~5h25m, not 3h25m). Returns
+// null when timezone/time data is missing, so callers can fall back gracefully.
+function flightDurationHours(flight: Flight) {
+  const dep = parseHourValue(flight.flightTime);
+  const arr = parseHourValue(flight.arrivalTime) ?? extractArrivalHourFromFlightNotes(flight.notes);
+  if (dep == null || arr == null || !flight.departureTimezone || !flight.arrivalTimezone) return null;
+  const depDate = flight.flightDate;
+  const arrDate = flight.arrivalDate || flight.flightDate;
+  if (!isValidDateKey(depDate) || !isValidDateKey(arrDate)) return null;
+  const depOffset = timezoneOffsetMinutes(flight.departureTimezone, depDate);
+  const arrOffset = timezoneOffsetMinutes(flight.arrivalTimezone, arrDate);
+  if (depOffset == null || arrOffset == null) return null;
+  const dateKeyToUTC = (dateKey: string, hour: number) => {
+    const [y, m, d] = dateKey.split("-").map(Number);
+    return Date.UTC(y, m - 1, d) + hour * 3600000;
+  };
+  const depEpoch = dateKeyToUTC(depDate, dep) - depOffset * 60000;
+  const arrEpoch = dateKeyToUTC(arrDate, arr) - arrOffset * 60000;
+  const hours = (arrEpoch - depEpoch) / 3600000;
+  return hours > 0 && hours < 48 ? hours : null;
+}
+// Short Hebrew note describing the gap between the flight's two timezones, e.g.
+// "לונדון 2 שעות אחורה מישראל". Returns null when zones are missing or identical.
+function buildTimezoneDiffNote(flight: Flight) {
+  const dep = flight.departureTimezone;
+  const arr = flight.arrivalTimezone;
+  if (!dep || !arr || dep === arr) return null;
+  const depOffset = timezoneOffsetMinutes(dep, flight.flightDate);
+  const arrOffset = timezoneOffsetMinutes(arr, flight.arrivalDate || flight.flightDate);
+  if (depOffset == null || arrOffset == null) return null;
+  const diffMinutes = arrOffset - depOffset;
+  if (diffMinutes === 0) return null;
+  const direction = diffMinutes < 0 ? "אחורה" : "קדימה";
+  return `${timezoneLabel(arr)} ${formatHebrewHours(Math.abs(diffMinutes) / 60)} ${direction} מ${timezoneLabel(dep)}`;
+}
 function isValidDateKey(value: string | null | undefined) {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
@@ -467,33 +571,39 @@ function buildPlannerDayFlightContext(dayIndex: number, dayCount: number, day: D
     const phase = getFlightPhase(flight, sortedFlights);
     const flightHour = parseHourValue(flight.flightTime);
     if (flightHour == null) return null;
-    const arrivalHour = extractArrivalHourFromFlightNotes(flight.notes);
+    const arrivalHour = getFlightArrivalHour(flight);
     const transferHours = Math.max(0, flight.transferMinutes || 0) / 60;
 
+    const duration = flightDurationHours(flight);
+
     if (phase === "outbound") {
-      // On the destination's day calendar the outbound flight should appear when it
-      // *lands*, not at the (other-timezone) departure time — otherwise the block
-      // stretches across hours that aren't part of the destination day at all.
+      // On the destination's day calendar the flight is drawn in the *arrival* (local)
+      // timezone: it ends when it lands, and the block spans the real flight duration
+      // back from the landing time (the take-off shown in destination local time).
       const landingHour = arrivalHour ?? flightHour;
+      const blockStart = duration != null ? Math.max(0, landingHour - duration) : landingHour;
       const postFlightStartHour = landingHour + transferHours;
       availableStartHour = Math.max(availableStartHour, postFlightStartHour);
       return {
         flight,
         phase,
-        startHour: landingHour,
-        endHour: Math.max(landingHour, postFlightStartHour),
+        startHour: blockStart,
+        endHour: Math.max(blockStart + 0.25, landingHour, duration == null ? postFlightStartHour : landingHour),
         dayPart: getDayPartLabel(landingHour),
       };
     }
 
+    // Return leg is drawn in the *departure* (local) timezone: it starts at take-off
+    // and spans the real flight duration forward (arrival shown in departure local time).
     const airportDepartureHour = Math.max(0, flightHour - transferHours);
     availableEndHour = Math.min(availableEndHour, airportDepartureHour);
+    const blockEnd = duration != null ? flightHour + duration : (arrivalHour ?? flightHour);
     return {
       flight,
       phase,
-      startHour: airportDepartureHour,
-      endHour: Math.max(airportDepartureHour, arrivalHour ?? flightHour),
-      dayPart: getDayPartLabel(airportDepartureHour),
+      startHour: flightHour,
+      endHour: Math.max(flightHour + 0.25, blockEnd),
+      dayPart: getDayPartLabel(flightHour),
     };
   }).filter(Boolean) as PlannerDayFlightEntry[];
 
@@ -1714,7 +1824,8 @@ function App() {
   const toggleVisited = (placeId: string) => setVisitedIds((current) => current.includes(placeId) ? current.filter((id) => id !== placeId) : [...current, placeId]);
   const addFlight = async () => {
     if (!flightDraft.type || !flightDraft.flightDate || !flightDraft.flightTime) return;
-    const newFlight: Flight = { id: `flight-${Date.now()}`, type: flightDraft.type as "arrival" | "departure", flightDate: flightDraft.flightDate!, flightTime: flightDraft.flightTime!, airport: flightDraft.airport || "", flightNumber: flightDraft.flightNumber || undefined, transferMinutes: flightDraft.transferMinutes ?? 45, notes: flightDraft.notes || "" };
+    const defaults = defaultFlightTimezones(flightDraft.type as "arrival" | "departure");
+    const newFlight: Flight = { id: `flight-${Date.now()}`, type: flightDraft.type as "arrival" | "departure", flightDate: flightDraft.flightDate!, flightTime: flightDraft.flightTime!, airport: flightDraft.airport || "", flightNumber: flightDraft.flightNumber || undefined, transferMinutes: flightDraft.transferMinutes ?? 45, notes: flightDraft.notes || "", arrivalTime: flightDraft.arrivalTime || "", arrivalDate: flightDraft.arrivalDate || "", departureTimezone: flightDraft.departureTimezone || defaults.departure, arrivalTimezone: flightDraft.arrivalTimezone || defaults.arrival };
     setFlights((current) => [...current, newFlight]);
     apiFetch(`${apiBase}/flights`, { method: "POST", body: JSON.stringify(newFlight) }).catch(() => {});
     setFlightDraft({ type: "arrival", transferMinutes: 45 });
@@ -2654,6 +2765,12 @@ function App() {
                         : entry.kind === "hotel" ? `🏨 ${entry.subKind === "checkin" ? "צ׳ק אין" : "צ׳ק אאוט"} · ${entry.hotel.name}`
                         : entry.kind === "transit" ? `🚆 ${entry.transit.fromLabel} ← ${entry.transit.toLabel}${entry.transit.line ? ` · ${entry.transit.line}` : ""}${entry.transit.cost ? ` · ${entry.transit.cost}` : ""}`
                         : entry.place.name;
+                      const flightEndpoints = entry.kind === "flight" ? getFlightEndpointLabels(entry.flight) : null;
+                      const flightArrivalLabel = entry.kind === "flight" ? (entry.flight.arrivalTime || formatHourLabel(getFlightArrivalHour(entry.flight) ?? entry.endHour)) : null;
+                      const flightTimeText = entry.kind === "flight" && flightEndpoints
+                        ? `${flightEndpoints.from} ${entry.flight.flightTime} → ${flightEndpoints.to} ${flightArrivalLabel}`
+                        : null;
+                      const flightDiffNote = entry.kind === "flight" ? buildTimezoneDiffNote(entry.flight) : null;
                       const isShort = height < 52;
                       const clickable = entry.kind === "place";
                       const photoUrl = entry.kind === "place" ? (entry.place.imageUrl || defaultPlaceImage) : null;
@@ -2679,7 +2796,7 @@ function App() {
                           onKeyDown={clickable ? (event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(entry.place.id); } } : undefined}
                           role={clickable ? "button" : undefined}
                           tabIndex={clickable ? 0 : undefined}
-                          title={clickable ? `${entry.startLabel} - ${entry.endLabel} · גרור לשינוי השעה` : `${entry.startLabel} - ${entry.endLabel}`}
+                          title={flightTimeText ? `${flightTimeText}${flightDiffNote ? ` · ${flightDiffNote}` : ""}` : clickable ? `${entry.startLabel} - ${entry.endLabel} · גרור לשינוי השעה` : `${entry.startLabel} - ${entry.endLabel}`}
                         >
                           {photoUrl && <img className="planner-cal-block-img" src={photoUrl} alt="" loading="lazy" draggable={false} onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} />}
                           {entry.kind === "place" && renderPlaceMenu(entry.place)}
@@ -2687,8 +2804,11 @@ function App() {
                             <button type="button" className="planner-cal-ride-remove" title="הסר נסיעה" onClick={(e) => { e.stopPropagation(); removeTransit(entry.transit.id); }}>✕</button>
                           )}
                           {isPinned && <span className="planner-cal-pin" title={`מעוגן${pinnedTime ? ` · ${pinnedTime}` : ""}`}>📌</span>}
-                          <span className="planner-cal-block-time">{startText}{!isShort ? ` – ${endText}` : ""}</span>
+                          {flightTimeText
+                            ? <span className="planner-cal-block-time" dir="ltr">{flightTimeText}</span>
+                            : <span className="planner-cal-block-time">{startText}{!isShort ? ` – ${endText}` : ""}</span>}
                           <strong className="planner-cal-block-title">{title}</strong>
+                          {flightDiffNote && !isShort && <span className="planner-cal-block-note">🕒 {flightDiffNote}</span>}
                         </article>,
                       ];
                     })}
@@ -2852,7 +2972,7 @@ function App() {
                   {typePlaces.map((place) => {
                     const assignedDayId = assignedDayByPlaceId[place.id] || "";
                     const isPinned = Boolean(pinnedDayByPlaceId[place.id]);
-                    return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" loading="lazy" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><span>{place.rating ? `⭐ ${place.rating.toFixed(1)}` : "חדש"}</span></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>;
+                    return <div key={place.id} className="place-card-wrap"><article className="place-card place-card-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="place-image" loading="lazy" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} /><div className="place-body"><div className="place-topline"><TypeChip type={place.type} /><span className="chip soft">{place.area || "ללא אזור"}</span></div><h2>{place.name}</h2><p>{place.shortDescription || "ללא תיאור"}</p><div className="place-basic-meta"><span>{place.station || "תחנה לא הוזנה"}</span><select className="place-card-priority-select" value={place.priority ?? 3} aria-label="עדיפות" style={{ color: priorityColors[place.priority ?? 3], borderColor: `color-mix(in srgb, ${priorityColors[place.priority ?? 3]} 50%, transparent)`, background: `color-mix(in srgb, ${priorityColors[place.priority ?? 3]} 15%, transparent)` }} onClick={(e) => e.stopPropagation()} onKeyDown={stopEventPropagation} onChange={(e) => { e.stopPropagation(); setPlacePriority(place.id, Number(e.target.value)); }}>{[1, 2, 3, 4, 5].map((level) => <option key={level} value={level} style={{ color: priorityColors[level] }}>{`עדיפות ${level} ⁦${"●".repeat(level)}${"○".repeat(5 - level)}⁩`}</option>)}</select></div>{isPinned && <span className="pin-indicator">מעוגן ליום</span>}</div></article><div className="place-menu-wrap"><button className="place-menu-btn" type="button" aria-label="אפשרויות" onClick={(e) => { e.stopPropagation(); setOpenPlaceMenu((prev) => prev === `home:${place.id}` ? null : `home:${place.id}`); }} onKeyDown={stopEventPropagation}>⋯</button>{openPlaceMenu === `home:${place.id}` && <div className="place-context-menu" onClick={(e) => e.stopPropagation()}><button type="button" onClick={() => { startEditingPlace(place); setOpenPlaceMenu(null); }}>✏️ עריכה</button><div className="context-menu-day-row"><span>⭐ עדיפות</span><select value={place.priority ?? 3} onChange={(e) => { setPlacePriority(place.id, Number(e.target.value)); setOpenPlaceMenu(null); }}><option value={1}>1 — נמוכה</option><option value={2}>2</option><option value={3}>3 — בינונית</option><option value={4}>4</option><option value={5}>5 — גבוהה</option></select></div><div className="context-menu-day-row"><span>📅 שיבוץ ליום</span><select value={assignedDayId} onChange={(event) => { const nextDayId = event.target.value; if (!nextDayId) { clearPlaceAssignment(place.id); } else { addPlaceToDay(nextDayId, place.id); } }}><option value="">ללא יום</option>{dayPlans.map((day) => <option key={day.id} value={day.id}>{day.title}</option>)}</select></div><button type="button" className="danger" onClick={() => { deletePlace(place.id); setOpenPlaceMenu(null); }}>🗑 מחיקה</button></div>}</div></div>;
                   })}
                 </div>
               </section>
@@ -3178,7 +3298,21 @@ function App() {
                   <span className="flight-icon">{f.type === "arrival" ? "🛬" : "🛫"}</span>
                   <div className="flight-item-body">
                     <strong>{f.type === "arrival" ? "הגעה" : "יציאה"}</strong>
-                    <span>{f.flightDate} · {f.flightTime}</span>
+                    {(() => {
+                      const ends = getFlightEndpointLabels(f);
+                      const arr = f.arrivalTime || (getFlightArrivalHour(f) != null ? formatHourLabel(getFlightArrivalHour(f)!) : "");
+                      const overnight = f.arrivalDate && f.arrivalDate !== f.flightDate;
+                      const diffNote = buildTimezoneDiffNote(f);
+                      return (
+                        <>
+                          <span dir="ltr">
+                            {ends.from} {f.flightTime}{f.departureTimezone ? ` (${timezoneLabel(f.departureTimezone)})` : ""}
+                            {arr ? ` → ${ends.to} ${arr}${overnight ? ` (${f.arrivalDate})` : ""}${f.arrivalTimezone ? ` (${timezoneLabel(f.arrivalTimezone)})` : ""}` : ""}
+                          </span>
+                          {diffNote && <span className="flight-notes">🕒 {diffNote}</span>}
+                        </>
+                      );
+                    })()}
                     <span>{f.airport}{f.flightNumber ? ` · ${f.flightNumber}` : ""}</span>
                     {f.notes && <span className="flight-notes">{f.notes}</span>}
                   </div>
@@ -3419,20 +3553,34 @@ function App() {
           <div className="modal-shell modal-dialog flights-panel" onClick={(e) => e.stopPropagation()}>
             <div className="section-head"><strong>✈️ טיסות</strong><button type="button" onClick={() => setShowFlights(false)}>✕</button></div>
             <div style={{ padding: "0 1rem" }}>
-              {flights.map((f) => (
-                <div key={f.id} className="flight-item">
-                  <span>{f.type === "arrival" ? "🛬 הגעה" : "🛫 יציאה"}</span>
-                  <span>{f.flightDate} {f.flightTime}</span>
-                  <span>{f.airport}{f.flightNumber ? ` · ${f.flightNumber}` : ""}</span>
-                  <button type="button" className="danger" onClick={() => removeFlight(f.id)}>✕</button>
-                </div>
-              ))}
+              {flights.map((f) => {
+                const ends = getFlightEndpointLabels(f);
+                const arr = f.arrivalTime || (getFlightArrivalHour(f) != null ? formatHourLabel(getFlightArrivalHour(f)!) : "");
+                const overnight = f.arrivalDate && f.arrivalDate !== f.flightDate;
+                const diffNote = buildTimezoneDiffNote(f);
+                return (
+                  <div key={f.id} className="flight-item">
+                    <span>{f.type === "arrival" ? "🛬 הגעה" : "🛫 יציאה"}</span>
+                    <span>{f.flightDate}</span>
+                    <span dir="ltr">
+                      {ends.from} {f.flightTime}{arr ? ` → ${ends.to} ${arr}${overnight ? ` (${f.arrivalDate})` : ""}` : ""}
+                    </span>
+                    <span>{f.airport}{f.flightNumber ? ` · ${f.flightNumber}` : ""}</span>
+                    {diffNote && <span className="flight-notes">🕒 {diffNote}</span>}
+                    <button type="button" className="danger" onClick={() => removeFlight(f.id)}>✕</button>
+                  </div>
+                );
+              })}
               {!flights.length && <p>עדיין לא הוזנו טיסות.</p>}
               <div className="flight-add-form form-stack" style={{ marginTop: "1rem" }}>
                 <label>סוג<select value={flightDraft.type || "arrival"} onChange={(e) => setFlightDraft((d) => ({ ...d, type: e.target.value as "arrival" | "departure" }))}><option value="arrival">הגעה</option><option value="departure">יציאה</option></select></label>
                 <label>תאריך<input type="date" value={flightDraft.flightDate || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightDate: e.target.value }))} /></label>
-                <label>שעה<input type="time" value={flightDraft.flightTime || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightTime: e.target.value }))} /></label>
-                <label>שדה תעופה<input value={flightDraft.airport || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, airport: e.target.value }))} placeholder="למשל: LHR" /></label>
+                <label>שעת המראה<input type="time" value={flightDraft.flightTime || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightTime: e.target.value }))} /></label>
+                <label>אזור זמן המראה<select value={flightDraft.departureTimezone || defaultFlightTimezones((flightDraft.type as "arrival" | "departure") || "arrival").departure} onChange={(e) => setFlightDraft((d) => ({ ...d, departureTimezone: e.target.value }))}>{TIMEZONE_OPTIONS.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}</select></label>
+                <label>שעת נחיתה<input type="time" value={flightDraft.arrivalTime || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, arrivalTime: e.target.value }))} /></label>
+                <label>תאריך נחיתה (אם שונה)<input type="date" value={flightDraft.arrivalDate || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, arrivalDate: e.target.value }))} /></label>
+                <label>אזור זמן נחיתה<select value={flightDraft.arrivalTimezone || defaultFlightTimezones((flightDraft.type as "arrival" | "departure") || "arrival").arrival} onChange={(e) => setFlightDraft((d) => ({ ...d, arrivalTimezone: e.target.value }))}>{TIMEZONE_OPTIONS.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}</select></label>
+                <label>שדה תעופה<input value={flightDraft.airport || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, airport: e.target.value }))} placeholder="למשל: TLV → LHR" /></label>
                 <label>מספר טיסה<input value={flightDraft.flightNumber || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightNumber: e.target.value }))} placeholder="למשל: LY315" /></label>
                 <label>זמן העברה (דקות)<input type="number" value={flightDraft.transferMinutes ?? 45} onChange={(e) => setFlightDraft((d) => ({ ...d, transferMinutes: Number(e.target.value) }))} /></label>
                 <div className="inline-actions"><button type="button" onClick={addFlight}>הוסף טיסה</button></div>
@@ -3452,8 +3600,12 @@ function App() {
             <div className="form-stack settings-dialog-body">
               <label>סוג<select value={flightDraft.type || "arrival"} onChange={(e) => setFlightDraft((d) => ({ ...d, type: e.target.value as "arrival" | "departure" }))}><option value="arrival">🛬 הגעה</option><option value="departure">🛫 יציאה</option></select></label>
               <label>תאריך<input type="date" value={flightDraft.flightDate || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightDate: e.target.value }))} /></label>
-              <label>שעה<input type="time" value={flightDraft.flightTime || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightTime: e.target.value }))} /></label>
-              <label>שדה תעופה<input value={flightDraft.airport || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, airport: e.target.value }))} placeholder="למשל: LHR" /></label>
+              <label>שעת המראה<input type="time" value={flightDraft.flightTime || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightTime: e.target.value }))} /></label>
+              <label>אזור זמן המראה<select value={flightDraft.departureTimezone || defaultFlightTimezones((flightDraft.type as "arrival" | "departure") || "arrival").departure} onChange={(e) => setFlightDraft((d) => ({ ...d, departureTimezone: e.target.value }))}>{TIMEZONE_OPTIONS.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}</select></label>
+              <label>שעת נחיתה<input type="time" value={flightDraft.arrivalTime || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, arrivalTime: e.target.value }))} /></label>
+              <label>תאריך נחיתה (אם שונה)<input type="date" value={flightDraft.arrivalDate || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, arrivalDate: e.target.value }))} /></label>
+              <label>אזור זמן נחיתה<select value={flightDraft.arrivalTimezone || defaultFlightTimezones((flightDraft.type as "arrival" | "departure") || "arrival").arrival} onChange={(e) => setFlightDraft((d) => ({ ...d, arrivalTimezone: e.target.value }))}>{TIMEZONE_OPTIONS.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}</select></label>
+              <label>שדה תעופה<input value={flightDraft.airport || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, airport: e.target.value }))} placeholder="למשל: TLV → LHR" /></label>
               <label>מספר טיסה<input value={flightDraft.flightNumber || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, flightNumber: e.target.value }))} placeholder="למשל: LY315" /></label>
               <label>זמן העברה (דקות)<input type="number" value={flightDraft.transferMinutes ?? 45} onChange={(e) => setFlightDraft((d) => ({ ...d, transferMinutes: Number(e.target.value) }))} /></label>
               <label>הערות<input value={flightDraft.notes || ""} onChange={(e) => setFlightDraft((d) => ({ ...d, notes: e.target.value }))} placeholder="אופציונלי" /></label>

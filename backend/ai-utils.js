@@ -210,7 +210,7 @@ function buildTripContext({ places, hotel, hotels, dayPlans, tripConfig, flights
   const flightsInfo = sortedFlights.map((f) => {
     const phase = getFlightPhase(f, sortedFlights);
     const flightHour = parseHourValue(f.flightTime);
-    const arrivalHour = extractArrivalHourFromFlightNotes(f.notes);
+    const arrivalHour = parseHourValue(f.arrivalTime) ?? extractArrivalHourFromFlightNotes(f.notes);
     const transferHours = Math.max(0, f.transferMinutes || 0) / 60;
     const usableStartTime = phase === 'outbound' && (arrivalHour != null || flightHour != null)
       ? formatHourLabel((arrivalHour ?? flightHour) + transferHours)
@@ -224,11 +224,14 @@ function buildTripContext({ places, hotel, hotels, dayPlans, tripConfig, flights
       rawType: f.type,
       typeLabel: f.type === 'arrival' ? 'נחיתה' : 'המראה',
       date: f.flightDate,
-      time: f.flightTime,
+      departureTime: f.flightTime,
+      departureTimezone: f.departureTimezone || '',
+      arrivalDate: f.arrivalDate || f.flightDate,
+      arrivalTime: f.arrivalTime || (arrivalHour != null ? formatHourLabel(arrivalHour) : null),
+      arrivalTimezone: f.arrivalTimezone || '',
       airport: f.airport,
       flightNumber: f.flightNumber || '',
       transferToHotelMins: f.transferMinutes,
-      arrivalTimeFromNotes: arrivalHour != null ? formatHourLabel(arrivalHour) : null,
       usableStartTime,
       usableEndTime,
       notes: f.notes,

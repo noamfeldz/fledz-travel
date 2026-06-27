@@ -138,6 +138,10 @@ async function initSchema() {
   await query(`ALTER TABLE day_plans ADD COLUMN IF NOT EXISTS pinned_place_ids JSONB NOT NULL DEFAULT '[]'`);
   await query(`ALTER TABLE day_plans ADD COLUMN IF NOT EXISTS pinned_times JSONB NOT NULL DEFAULT '{}'`);
   await query(`ALTER TABLE flights ADD COLUMN IF NOT EXISTS flight_number TEXT NOT NULL DEFAULT ''`);
+  await query(`ALTER TABLE flights ADD COLUMN IF NOT EXISTS arrival_time       TEXT NOT NULL DEFAULT ''`);
+  await query(`ALTER TABLE flights ADD COLUMN IF NOT EXISTS arrival_date       DATE`);
+  await query(`ALTER TABLE flights ADD COLUMN IF NOT EXISTS departure_timezone TEXT NOT NULL DEFAULT ''`);
+  await query(`ALTER TABLE flights ADD COLUMN IF NOT EXISTS arrival_timezone   TEXT NOT NULL DEFAULT ''`);
 
   // ── auth + multi-trip tables ──────────────────────────────────────────────
   await query(`
@@ -290,19 +294,23 @@ async function initSchema() {
 
   // Seed flights (idempotent)
   await query(`
-    INSERT INTO flights (id, trip_id, type, flight_date, flight_time, airport, flight_number, transfer_minutes, notes)
+    INSERT INTO flights (id, trip_id, type, flight_date, flight_time, airport, flight_number, transfer_minutes, notes, arrival_time, arrival_date, departure_timezone, arrival_timezone)
     VALUES
-      ('flight-iz911', $1, 'departure', '2026-06-30', '12:30', 'TLV → STN (London Stansted)', 'IZ911', 60, 'Economy (Y), מגיע 15:55'),
-      ('flight-iz912', $1, 'arrival',   '2026-07-07', '17:10', 'STN (London Stansted) → TLV', 'IZ912', 45, 'Economy (Y), מגיע 08.07 00:05')
+      ('flight-iz911', $1, 'departure', '2026-06-30', '12:30', 'TLV → STN (London Stansted)', 'IZ911', 60, 'Economy (Y), מגיע 15:55',       '15:55', '2026-06-30', 'Asia/Jerusalem', 'Europe/London'),
+      ('flight-iz912', $1, 'arrival',   '2026-07-07', '17:10', 'STN (London Stansted) → TLV', 'IZ912', 45, 'Economy (Y), מגיע 08.07 00:05', '00:05', '2026-07-08', 'Europe/London', 'Asia/Jerusalem')
     ON CONFLICT (id) DO UPDATE SET
-      trip_id          = EXCLUDED.trip_id,
-      type             = EXCLUDED.type,
-      flight_date      = EXCLUDED.flight_date,
-      flight_time      = EXCLUDED.flight_time,
-      airport          = EXCLUDED.airport,
-      flight_number    = EXCLUDED.flight_number,
-      transfer_minutes = EXCLUDED.transfer_minutes,
-      notes            = EXCLUDED.notes
+      trip_id            = EXCLUDED.trip_id,
+      type               = EXCLUDED.type,
+      flight_date        = EXCLUDED.flight_date,
+      flight_time        = EXCLUDED.flight_time,
+      airport            = EXCLUDED.airport,
+      flight_number      = EXCLUDED.flight_number,
+      transfer_minutes   = EXCLUDED.transfer_minutes,
+      notes              = EXCLUDED.notes,
+      arrival_time       = EXCLUDED.arrival_time,
+      arrival_date       = EXCLUDED.arrival_date,
+      departure_timezone = EXCLUDED.departure_timezone,
+      arrival_timezone   = EXCLUDED.arrival_timezone
   `, [defaultTripId]);
 
   console.log('✅ Schema ready');

@@ -520,6 +520,25 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer;
 }
 
+.place-card-priority-select {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 0.32rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
+  box-shadow: none;
+}
+
+.place-card-priority-select:hover {
+  border-color: var(--color-accent);
+}
+
 .place-card-clickable:hover {
   transform: translateY(-4px);
   box-shadow: 0 12px 30px rgba(0,0,0,0.06);
@@ -572,6 +591,8 @@ input:focus, select:focus, textarea:focus {
 .place-basic-meta {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
   color: var(--color-text-muted);
   font-size: 0.875rem;
 }
@@ -7330,6 +7351,16 @@ label {
   text-overflow: ellipsis;
 }
 
+.planner-cal-block-note {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .planner-cal-block.is-short {
   flex-direction: row;
   align-items: baseline;
@@ -7344,9 +7375,44 @@ label {
 .planner-cal-block--morning { --cal-accent: #fdba74; --cal-bg: rgba(253, 186, 116, 0.14); }
 .planner-cal-block--midday { --cal-accent: #f59e0b; --cal-bg: rgba(245, 158, 11, 0.14); }
 .planner-cal-block--evening { --cal-accent: #93c5fd; --cal-bg: rgba(147, 197, 253, 0.14); }
-.planner-cal-block--outbound { --cal-accent: #60a5fa; --cal-bg: rgba(96, 165, 250, 0.18); }
-.planner-cal-block--return { --cal-accent: #c084fc; --cal-bg: rgba(192, 132, 252, 0.18); }
 .planner-cal-block--hotel { --cal-accent: #34d399; --cal-bg: rgba(52, 211, 153, 0.16); }
+
+/* ── Flight blocks: a real airplane-window photo backdrop ────────────────────── */
+.planner-cal-block--flight {
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 10px 26px rgba(8, 14, 38, 0.45);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+/* Departure = daytime blue-sky window view. */
+.planner-cal-block--outbound {
+  --cal-accent: #93c5fd;
+  background-color: #1d4ed8; /* fallback until /flights/departure.png is present */
+  background-image:
+    linear-gradient(180deg, rgba(6, 12, 30, 0.1) 0%, rgba(6, 12, 30, 0.28) 46%, rgba(6, 12, 30, 0.9) 100%),
+    url("/flights/departure.png");
+}
+/* Arrival = sunset window view. */
+.planner-cal-block--return {
+  --cal-accent: #fdba74;
+  background-color: #b45309; /* fallback until /flights/arrival.png is present */
+  background-image:
+    linear-gradient(180deg, rgba(8, 8, 24, 0.12) 0%, rgba(8, 8, 24, 0.3) 46%, rgba(8, 8, 24, 0.92) 100%),
+    url("/flights/arrival.png");
+}
+
+/* Keep the text crisp over the photo. */
+.planner-cal-block--flight .planner-cal-block-time,
+.planner-cal-block--flight .planner-cal-block-title,
+.planner-cal-block--flight .planner-cal-block-note {
+  position: relative;
+  z-index: 2;
+  text-shadow: 0 1px 6px rgba(4, 8, 22, 0.75);
+}
+.planner-cal-block--flight .planner-cal-block-time { color: rgba(255, 255, 255, 0.92); }
+.planner-cal-block--flight .planner-cal-block-title { color: #fff; }
+.planner-cal-block--flight .planner-cal-block-note { color: rgba(255, 255, 255, 0.88); }
 
 /* Pin badge — shows at a glance that a block is anchored to a fixed time. */
 .planner-cal-pin {
