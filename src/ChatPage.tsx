@@ -3,6 +3,9 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import { deriveLocationBias, importPlacesLibrary } from "./googleMapsLoader";
 
 const API = "/api";
+// The "build me a plan" quick suggestion shows the constraints preview first
+// (instead of going to free-text chat), so the user reviews before planning.
+const PLAN_SUGGESTION = "🤖 בנה לי תוכנית שבועית מיטבית לטיול";
 async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(API + path, {
     headers: { "Content-Type": "application/json" },
@@ -770,12 +773,13 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, onSetPrio
     });
   }, [intentLookups, messages, searchIntentCandidates]);
 
-  // Auto-trigger plan if requested
+  // Auto-trigger plan if requested — show the constraints preview first; the
+  // actual planning runs only when the user confirms from the preview.
   useEffect(() => {
     const shouldTriggerPlan = triggerPlan || searchParams.get("trigger") === "plan";
     if (!shouldTriggerPlan || planTriggeredRef.current) return;
     planTriggeredRef.current = true;
-    handleTriggerPlan();
+    handleShowPlanPreview();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, sessions]);
 
@@ -1370,7 +1374,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, onSetPrio
     "מה הכי מומלץ לבוקר הראשון?",
     "איך לחלק את הימים בצורה הכי חכמה?",
     "מה הזמן הטוב ביותר לבקר ב...",
-    "🤖 בנה לי תוכנית שבועית מיטבית לטיול",
+    PLAN_SUGGESTION,
   ];
 
   return (
@@ -1514,7 +1518,7 @@ export default function ChatPage({ tripContext, onApplyPlan, onAction, onSetPrio
                     key={suggestion}
                     type="button"
                     className="chat-suggestion-chip"
-                    onClick={() => sendMessage(suggestion)}
+                    onClick={() => (suggestion === PLAN_SUGGESTION ? handleShowPlanPreview() : sendMessage(suggestion))}
                   >
                     {suggestion}
                   </button>
