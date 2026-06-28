@@ -692,10 +692,17 @@ function PlaceFocusMap({
   nearbyPlaces: Place[];
   hotel: Hotel;
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const mapPoints = [[hotel.lat, hotel.lng] as [number, number], [place.lat, place.lng] as [number, number], ...nearbyPlaces.map((item) => [item.lat, item.lng] as [number, number])];
   const routePath: Array<[number, number]> = [[hotel.lat, hotel.lng], [place.lat, place.lng]];
-  return (
-    <MapContainer key={`place-map-${place.id}-${nearbyPlaces.map((item) => item.id).join("-")}`} center={[place.lat, place.lng]} zoom={13} scrollWheelZoom={false} className="place-focus-map">
+  useEffect(() => {
+    if (!isExpanded) return;
+    const handleKey = (event: KeyboardEvent) => { if (event.key === "Escape") setIsExpanded(false); };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [isExpanded]);
+  const renderMapLayers = () => (
+    <>
       <FitDayMapBounds points={mapPoints} />
       <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
       <Marker position={[hotel.lat, hotel.lng]} icon={hotelMarkerIcon}>
@@ -710,7 +717,29 @@ function PlaceFocusMap({
         </Marker>
       ))}
       <Polyline positions={routePath} pathOptions={{ color: "#f97316", weight: 5, opacity: 0.9 }} />
-    </MapContainer>
+    </>
+  );
+  return (
+    <>
+      <div className="place-focus-map-wrap">
+        <MapContainer key={`place-map-${place.id}-${nearbyPlaces.map((item) => item.id).join("-")}`} center={[place.lat, place.lng]} zoom={13} scrollWheelZoom={false} dragging={false} zoomControl={false} doubleClickZoom={false} className="place-focus-map">
+          {renderMapLayers()}
+        </MapContainer>
+        <button type="button" className="place-focus-map-expand-overlay" onClick={() => setIsExpanded(true)} aria-label="הגדלת המפה">
+          <span className="place-focus-map-expand-chip">⤢ הגדלת המפה</span>
+        </button>
+      </div>
+      {isExpanded && (
+        <div className="map-modal-backdrop" role="dialog" aria-modal="true" aria-label="מפה מוגדלת" onClick={() => setIsExpanded(false)}>
+          <div className="map-modal-dialog" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="map-modal-close" onClick={() => setIsExpanded(false)} aria-label="סגירת המפה">✕</button>
+            <MapContainer key={`place-map-expanded-${place.id}`} center={[place.lat, place.lng]} zoom={13} scrollWheelZoom className="map-modal-map">
+              {renderMapLayers()}
+            </MapContainer>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 function getActiveHotelForDay(dayIndex: number, hotels: Hotel[], tripConfig?: TripConfig): Hotel | undefined {
@@ -3084,7 +3113,7 @@ function App() {
                   <span>תמונה אחת של כל הטיול: המלון, כל התחנות, וזמני ההגעה מכל בסיס.</span>
                 </div>
               </div>
-              <MapContainer center={[hotels[0]?.lat ?? defaultHotel.lat, hotels[0]?.lng ?? defaultHotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />{hotels.map((h) => <Marker key={h.id} position={[h.lat, h.lng]} icon={hotelMarkerIcon}><Popup><strong>{h.name}</strong><div>{h.address}</div></Popup></Marker>)}{places.map((place) => { const trip = estimateTransport(haversineKm(hotels[0] ?? defaultHotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={getPlaceMarkerIcon(place)}><Popup><strong>{place.name}</strong><div>{place.address}</div><div>{trip.mode} | {trip.minutes} דק'</div></Popup></Marker>; })}</MapContainer>
+              <MapContainer center={[hotels[0]?.lat ?? defaultHotel.lat, hotels[0]?.lng ?? defaultHotel.lng]} zoom={12} scrollWheelZoom={false} className="map"><TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />{hotels.map((h) => <Marker key={h.id} position={[h.lat, h.lng]} icon={hotelMarkerIcon}><Popup><strong>{h.name}</strong><div>{h.address}</div></Popup></Marker>)}{places.map((place) => { const trip = estimateTransport(haversineKm(hotels[0] ?? defaultHotel, place)); return <Marker key={place.id} position={[place.lat, place.lng]} icon={getPlaceMarkerIcon(place)}><Popup><div className="map-popup map-popup-clickable" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="map-popup-image" loading="lazy" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} /><div className="map-popup-body"><strong>{place.name}</strong><div>{place.address}</div><div className="map-popup-meta">{trip.mode} | {trip.minutes} דק'</div><span className="map-popup-cta">פתיחת עמוד המקום ←</span></div></div></Popup></Marker>; })}</MapContainer>
             </div>
             <div className="map-legend">
               <div className="legend-row legend-row--wrap">
@@ -3103,7 +3132,7 @@ function App() {
                   <span>מלונות פעילים</span>
                 </div>
               </div>
-              {places.map((place) => <div key={place.id} className="saved-item saved-item-clickable compact" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><div><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}
+              {places.map((place) => <div key={place.id} className="saved-item saved-item-clickable compact map-list-item" onClick={() => openPlacePage(place.id)} onKeyDown={(event) => { if (isCardActivationKey(event)) { event.preventDefault(); openPlacePage(place.id); } }} role="button" tabIndex={0}><img src={place.imageUrl || defaultPlaceImage} alt={place.name} className="map-list-thumb" loading="lazy" onError={(event) => { const target = event.currentTarget; if (!target.dataset.fallback) { target.dataset.fallback = "1"; target.src = defaultPlaceImage; } }} /><div className="map-list-text"><strong>{place.name}</strong><p>{place.station || "ללא תחנה שמורה"}</p></div></div>)}
             </div>
           </section>
         )}
